@@ -80,3 +80,31 @@ def plot_extrapolation_IU(L_values, mSI, mSU, mBI, mBU, exponent=-3/4):
         plt.xlim(left=-0.005) # Ensure the intercept is clearly visible
         plt.tight_layout()
         plt.show()
+        
+def plot_frames(L_values, patch, iter, center_x, center_y):
+    print("\nGenerating Frames visualization...")
+    fig = plt.figure(figsize=(16, 12), dpi=150)
+    ax = fig.add_axes([0, 0, 1, 1])
+    to_screen = [1, 0, 0, 0, 1, 0]
+    
+    try:
+        patch.draw(to_screen, level=iter + 1, ax = ax)
+    except Exception as e:
+        print(f"An error occurred during drawing: {e}")
+        
+    
+    for l_value in L_values:
+        rect = plt.Rectangle(
+            (center_x - l_value/2, center_y - l_value/2),
+            l_value, l_value, 
+            fill=False, 
+            edgecolor='red', 
+            linewidth=1.5,
+            linestyle='--'
+        )
+        ax.add_patch(rect)
+
+    ax.set_aspect('equal', 'box')
+    ax.axis('off')
+    plt.title(f"Hat Tiling (Level {iter}) with Frames Centered at ({center_x}, {center_y})", fontsize=16, pad=20)
+    plt.show()

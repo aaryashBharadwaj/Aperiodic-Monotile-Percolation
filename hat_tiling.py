@@ -81,6 +81,10 @@ class HatTile:
     def __init__(self, label):
         self.label = label
         self.shape = hat_outline
+    def draw(self, S, level, ax):
+        drawPolygon(hat_outline, S, ax, cols[self.label], cols['edge'])
+        return
+    
 class MetaTile:
     def __init__(self, shape, width):
         self.shape = shape 
@@ -100,6 +104,19 @@ class MetaTile:
         for ch in self.children:
             ch['T'] = mul(M, ch['T'])
         return
+    def draw(self, S, level, ax):
+        if level > 0:
+            for g in self.children:
+                g['geom'].draw(mul(S, g['T']), level - 1, ax)
+        else:
+            drawPolygon(self.shape, S, ax, None, 'black')
+        return
+    
+def drawPolygon(shape, T, ax, f=cols['H'], e=cols['edge'],):
+    polygon = [transPt(T, p) for p in shape]
+    ax.fill([p['x'] for p in polygon], [p['y'] for p in polygon],
+            facecolor=f, edgecolor=e, linewidth=1)
+    return
 
 
 # Initialize tiles

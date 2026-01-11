@@ -4,14 +4,14 @@ import tqdm as tqdm
 from hat_tiling import H_init, T_init, P_init, F_init, constructPatch, constructMetatiles
 from graph_builder import build_neighbor_graph_fast, analyze_square_frame
 from percolation import percolationStatsI, percolationStatsU, percolationStatsBondI, percolationStatsBondU
-from visualisation import plot_percolation_stats_IU, plot_extrapolation_IU
+from visualisation import plot_frames, plot_percolation_stats_IU, plot_extrapolation_IU
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--r', type=int, default=5)
-    parser.add_argument('--t', type=int, default=100)
+    parser.add_argument('--r', type=int, default=4)
+    parser.add_argument('--t', type=int, default=10)
     parser.add_argument('--Lmin', type=float, default=50.0)
-    parser.add_argument('--Lmax', type=float, default=130.0)
+    parser.add_argument('--Lmax', type=float, default=100.0)
     parser.add_argument('--Lstep', type=float, default=10.0)
     parser.add_argument('--bt', type=float, default=1.0)
     args = parser.parse_args()
@@ -62,3 +62,4 @@ if __name__ == "__main__":
 
     plot_percolation_stats_IU(l_values, mSI, sSI, mSU, sSU, mBI, sBI, mBU, sBU)
     plot_extrapolation_IU(l_values, np.array(mSI), np.array(mSU), np.array(mBI), np.array(mBU))
+    plot_frames(l_values, p, args.r, fd['center_x'], fd['center_y'])

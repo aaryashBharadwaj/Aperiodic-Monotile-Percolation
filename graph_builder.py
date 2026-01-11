@@ -154,5 +154,7 @@ def analyze_square_frame(master_nodes, master_neighbors, L, boundary_thickness=1
         'top_boundary_nodes': np.array(new_top, dtype=np.int32),
         'bottom_boundary_nodes': np.array(new_bottom, dtype=np.int32),
         'left_boundary_nodes': np.array(new_left, dtype=np.int32),
-        'right_boundary_nodes': np.array(new_right, dtype=np.int32)
+        'right_boundary_nodes': np.array(new_right, dtype=np.int32),
+        'center_x': center_x,
+        'center_y': center_y
     }
