@@ -8,11 +8,11 @@ from visualisation import plot_frames, plot_percolation_stats_IU, plot_extrapola
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--r', type=int, default=4)
-    parser.add_argument('--t', type=int, default=10)
-    parser.add_argument('--Lmin', type=float, default=50.0)
+    parser.add_argument('--r', type=int, default=5)
+    parser.add_argument('--t', type=int, default=100)
+    parser.add_argument('--Lmin', type=float, default=10.0)
     parser.add_argument('--Lmax', type=float, default=100.0)
-    parser.add_argument('--Lstep', type=float, default=10.0)
+    parser.add_argument('--Lstep', type=float, default=1.0)
     parser.add_argument('--bt', type=float, default=1.0)
     args = parser.parse_args()
 
@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
     for l in l_values:
         print(f"\nAnalyzing L={l}")
-        fd = analyze_square_frame(master_nodes, master_neighbors, L=l, boundary_thickness=max(1.0, l*0.02))
+        fd = analyze_square_frame(master_nodes, master_neighbors, L=l, boundary_thickness = 1)
         
         if fd['node_count'] > 0:
             top_set = set(fd['top_boundary_nodes'])

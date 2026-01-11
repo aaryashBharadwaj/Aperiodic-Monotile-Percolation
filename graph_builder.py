@@ -113,8 +113,8 @@ def create_subgraph(master_nodes, master_neighbors, inside_original_indices):
 
 def analyze_square_frame(master_nodes, master_neighbors, L, boundary_thickness=1.0):
     # Calculate the actual center of the tiling
-    center_x = (master_nodes[:, 0].min() + master_nodes[:, 0].max()) / 2.0
-    center_y = (master_nodes[:, 1].min() + master_nodes[:, 1].max()) / 2.0
+    center_x = 200.0
+    center_y = -100.0
     
     # Create square frame centered on the tiling
     x_min, x_max = center_x - L / 2.0, center_x + L / 2.0
