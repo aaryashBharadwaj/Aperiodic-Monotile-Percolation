@@ -2,9 +2,9 @@ import numpy as np
 from percolation import percolationStatsI, percolationStatsU, percolationStatsBondI, percolationStatsBondU
 from visualisation import plot_percolation_stats_IU, plot_extrapolation_IU
 
-# -----------------------------
-# Lattice definitions
-# -----------------------------
+# This uses the same percolation engine as the aperiodic tiling, therein useful for testing
+
+# Generate a square lattice graph with periodic connectivity
 def square_lattice(L):
     N = L * L
     neighbors = [[] for _ in range(N)]
@@ -12,19 +12,18 @@ def square_lattice(L):
     for i in range(L):
         for j in range(L):
             idx = i*L + j
-            # Right neighbor
             if j < L-1:
                 neighbor = i*L + (j+1)
                 neighbors[idx].append(neighbor)
                 neighbors[neighbor].append(idx)
                 edges.add((min(idx, neighbor), max(idx, neighbor)))
-            # Bottom neighbor
             if i < L-1:
                 neighbor = (i+1)*L + j
                 neighbors[idx].append(neighbor)
                 neighbors[neighbor].append(idx)
                 edges.add((min(idx, neighbor), max(idx, neighbor)))
     return np.arange(N), neighbors, np.array(list(edges), dtype=np.int32)
+# Generate a triangle lattice graph with periodic connectivity
 
 def triangular_lattice(L):
     N = L * L
@@ -53,9 +52,7 @@ def triangular_lattice(L):
                 edges.add((min(idx, neighbor), max(idx, neighbor)))
     return np.arange(N), neighbors, np.array(list(edges), dtype=np.int32)
 
-# -----------------------------
-# Boundary sets
-# -----------------------------
+
 def boundary_sets(L):
     N = L*L
     top = np.arange(L)
@@ -64,9 +61,6 @@ def boundary_sets(L):
     right = np.arange(L-1, N, L)
     return top, bottom, left, right
 
-# -----------------------------
-# Run percolation test
-# -----------------------------
 def run_percolation_test(L_values, trials=50, lattice_type='square'):
     mSI_list, sSI_list, mSU_list, sSU_list = [], [], [], []
     mBI_list, sBI_list, mBU_list, sBU_list = [], [], [], []
@@ -98,9 +92,8 @@ def run_percolation_test(L_values, trials=50, lattice_type='square'):
         print(f"Site pc: I={statsSI.trials_mean():.4f}, U={statsSU.trials_mean():.4f}, Avg={avg_site:.4f}")
         print(f"Bond pc: I={statsBI.trials_mean():.4f}, U={statsBU.trials_mean():.4f}, Avg={avg_bond:.4f}")
 
-    # -----------------------------
+
     # Plot results
-    # -----------------------------
     plot_percolation_stats_IU(L_values, mSI_list, sSI_list, mSU_list, sSU_list,
                               mBI_list, sBI_list, mBU_list, sBU_list)
 
@@ -109,12 +102,10 @@ def run_percolation_test(L_values, trials=50, lattice_type='square'):
     mBI_avg = np.array([0.5*(i+j) for i,j in zip(mBI_list, mBU_list)])
     plot_extrapolation_IU(L_values, mSI_avg, mSI_avg, mBI_avg, mBI_avg)
 
-# -----------------------------
 # Main
-# -----------------------------
 if __name__ == "__main__":
     system_sizes = [100, 200, 300, 400]  # Increase for more convergence
-    trials = 100  # Number of trials per Lattice/Percolation
+    trials = 100  
 
     print("\n### Testing Square Lattice ###")
     run_percolation_test(system_sizes, trials, lattice_type='square')

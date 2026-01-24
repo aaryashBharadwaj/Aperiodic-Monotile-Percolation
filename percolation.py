@@ -3,6 +3,7 @@ import random
 from tqdm import tqdm
 from graph_builder import neighbors_to_csr
 
+# Weighted Quick Union with path compression for efficient disjoint set operations
 class WeightedQuickUnionUF:
     def __init__(self, n):
         self.parent = list(range(n))
@@ -15,6 +16,7 @@ class WeightedQuickUnionUF:
         return p
     def connected(self, p, q):
         return self.find(p) == self.find(q)
+    # Merge two components, attaching smaller tree to larger
     def union(self, p, q):
         rootP, rootQ = self.find(p), self.find(q)
         if rootP == rootQ: return
@@ -26,10 +28,11 @@ class WeightedQuickUnionUF:
             self.size[rootP] += self.size[rootQ]
         self.count -= 1
 
-# --- OPTIMIZED SITE PERCOLATION ---
+# Intersection site percolation: requires BOTH top-bottom AND left-right spanning:
 class HatPercolationI:
     def __init__(self, nodes, neighbours, top_set, bottom_set, left_set, right_set):
         self.N = len(nodes)
+        # Convert adjacency list to CSR format for faster neighbor lookups
         self.neighbors_arr, self.neighbor_starts = neighbors_to_csr(neighbours)
         self.top_set, self.bottom_set = set(top_set), set(bottom_set)
         self.left_set, self.right_set = set(left_set), set(right_set)
@@ -41,7 +44,6 @@ class HatPercolationI:
         self.openSite = 0
         
     def open_site(self, idx):
-        # No need to check if already open since we're using pre-shuffled order
         self.sites[idx] = True
         self.openSite += 1
         if idx in self.top_set: self.wqfTB.union(self.vTop, idx)
@@ -57,7 +59,7 @@ class HatPercolationI:
                 
     def percolates(self):
         return self.wqfTB.connected(self.vTop, self.vBot) and self.wqfLR.connected(self.vL, self.vR)
-
+    
 class HatPercolationU(HatPercolationI):
     def percolates(self):
         return self.wqfTB.connected(self.vTop, self.vBot) or self.wqfLR.connected(self.vL, self.vR)
@@ -69,10 +71,9 @@ class percolationStatsI:
         
         for _ in tqdm(range(trials), desc="Site I", leave=False):
             sim = HatPercolationI(nodes, neighbours, top, bot, left, right)
-            # Pre-shuffle all sites once
+            # Pre-shuffle all sites once 
             sites_order = list(range(sim.N))
             random.shuffle(sites_order)
-            
             # Open sites in shuffled order until percolation
             for site in sites_order:
                 sim.open_site(site)
@@ -85,6 +86,7 @@ class percolationStatsI:
     def trials_std(self): return np.std(self.trialResults)
     def report(self): print(f"Mean pc: {self.trials_mean():.6f} | Std: {self.trials_std():.6f}")
 
+# Union site percolation: requires EITHER top-bottom OR left-right spanning:
 class percolationStatsU(percolationStatsI):
     def __init__(self, nodes, neighbours, top, bot, left, right, trials):
         self.trialCount = trials
@@ -102,7 +104,7 @@ class percolationStatsU(percolationStatsI):
                     
             self.trialResults.append(sim.openSite / sim.N)
 
-# --- OPTIMIZED BOND PERCOLATION ---
+# Intersection bond percolation: requires BOTH top-bottom AND left-right spanning:
 class HatPercolationBondI:
     def __init__(self, nodes, edges, top_set, bottom_set, left_set, right_set):
         self.num_nodes = len(nodes)
@@ -120,7 +122,6 @@ class HatPercolationBondI:
         for n in right_set: self.wqfLR.union(self.vR, n)
         
     def open_bond(self, idx):
-        # No check needed with pre-shuffled order
         self.edge_status[idx] = True
         self.openBonds += 1
         u, v = self.edges[idx]
@@ -133,7 +134,7 @@ class HatPercolationBondI:
 class HatPercolationBondU(HatPercolationBondI):
     def percolates(self):
         return self.wqfTB.connected(self.vTop, self.vBot) or self.wqfLR.connected(self.vL, self.vR)
-
+    
 class percolationStatsBondI:
     def __init__(self, nodes, edges, top, bot, left, right, trials):
         self.trialResults = []
@@ -154,6 +155,7 @@ class percolationStatsBondI:
     def trials_std(self): return np.std(self.trialResults)
     def report(self): print(f"Mean Bond pc: {self.trials_mean():.6f} | Std: {self.trials_std():.6f}")
 
+# Union bond percolation: requires EITHER top-bottom OR left-right spanning:
 class percolationStatsBondU(percolationStatsBondI):
     def __init__(self, nodes, edges, top, bot, left, right, trials):
         self.trialResults = []
@@ -162,7 +164,8 @@ class percolationStatsBondU(percolationStatsBondI):
             sim = HatPercolationBondU(nodes, edges, top, bot, left, right)
             edges_order = list(range(sim.num_edges))
             random.shuffle(edges_order)
-            
+
+            # Open edges until percolation occurs
             for edge in edges_order:
                 sim.open_bond(edge)
                 if sim.percolates():

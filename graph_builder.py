@@ -2,11 +2,15 @@ import numpy as np
 from scipy.spatial import KDTree
 from hat_tiling import mul, transPt
 
+# Builds a graph representation of the hat tiling by extracting nodes and edges.
 def build_neighbor_graph_fast(patch, level=0):
+
+    # Pre-allocate array for nodes based on estimated count (grows exponentially with level)
     estimated_nodes = min(1000 * (4 ** level), 10000000)
     nodes = np.empty((estimated_nodes, 2), dtype=np.float64)
     node_count = [0]
     
+    # Recursively traverse the patch hierarchy and collect all node coordinates.
     def _collect_nodes(patch, S, level):
         if level > 0 and hasattr(patch, "children"):
             for g in patch.children:
@@ -17,15 +21,16 @@ def build_neighbor_graph_fast(patch, level=0):
                 if node_count[0] < len(nodes):
                     nodes[node_count[0]] = [pt_screen['x'], pt_screen['y']]
                     node_count[0] += 1
-    
     _collect_nodes(patch, [1,0,0,0,1,0], level)
     nodes = nodes[:node_count[0]]
-    
+
+    # Build spatial index for efficient proximity queries
     tree = KDTree(nodes)
     tol = 1e-5
     pairs = tree.query_pairs(r=tol)
-    
-    parent = np.arange(len(nodes))
+
+     # Union-Find data structure to merge duplicate nodes
+    parent = np.arange(len(nodes)) 
     def find(x):
         if parent[x] != x:
             parent[x] = find(parent[x])
@@ -64,7 +69,7 @@ def build_neighbor_graph_fast(patch, level=0):
             node_idx += n
     
     _collect_edges(patch, [1,0,0,0,1,0], level)
-    
+    # Build adjacency list from edges
     neighbors = [[] for _ in range(len(unique_nodes))]
     for i, j in edges_set:
         neighbors[i].append(j)
@@ -73,6 +78,7 @@ def build_neighbor_graph_fast(patch, level=0):
     
     return unique_nodes, neighbors
 
+#Convert adjacency list to Compressed Sparse Row (CSR) format for efficient storage.
 def neighbors_to_csr(neighbors):
     neighbor_starts = np.zeros(len(neighbors) + 1, dtype=np.int32)
     total = 0
@@ -89,8 +95,9 @@ def neighbors_to_csr(neighbors):
     
     return neighbors_arr, neighbor_starts
 
-##################################### SQUARE FRAME HATTILING BUILD ##################################
+##################################### SQUARE FRAME HAT TILING BUILD ##################################
 
+# Extract a subgraph containing only specified nodes from the master graph.
 def create_subgraph(master_nodes, master_neighbors, inside_original_indices):
     sub_nodes = master_nodes[inside_original_indices]
     num_sub_nodes = len(sub_nodes)
@@ -110,30 +117,31 @@ def create_subgraph(master_nodes, master_neighbors, inside_original_indices):
     
     return sub_nodes, sub_neighbors, original_to_new_map, sub_edges_list
 
-
+# Extract and analyze a square region of the hat tiling for percolation analysis.
 def analyze_square_frame(master_nodes, master_neighbors, L, boundary_thickness=1.0):
-    # Calculate the actual center of the tiling
+
+    # This centre was fine-tuned to ensure the square-frame lies fully within the patch for L = 400 at patch 5
+    # It can thus be tweaked for alternate usage
     center_x = 200.0
     center_y = -100.0
     
-    # Create square frame centered on the tiling
     x_min, x_max = center_x - L / 2.0, center_x + L / 2.0
     y_min, y_max = center_y - L / 2.0, center_y + L / 2.0
     
     nodes = master_nodes
+    # Find all nodes inside the square region
     inside_mask = (nodes[:, 0] >= x_min) & (nodes[:, 0] <= x_max) & \
                   (nodes[:, 1] >= y_min) & (nodes[:, 1] <= y_max)
-    
     inside_original_indices = np.where(inside_mask)[0]
     inside_nodes_coords = nodes[inside_original_indices]
-    
+    # Early return if region is too small
     if len(inside_original_indices) < 2:
         return {'node_count': 0}
 
     sub_nodes, sub_neighbors, original_to_new_map, sub_edges = create_subgraph(
         master_nodes, master_neighbors, inside_original_indices
     )
-
+    # Identify boundary nodes (nodes within boundary_thickness of edges)
     top_mask = (inside_nodes_coords[:, 1] >= y_max - boundary_thickness)
     bottom_mask = (inside_nodes_coords[:, 1] <= y_min + boundary_thickness)
     left_mask = (inside_nodes_coords[:, 0] <= x_min + boundary_thickness)
@@ -143,7 +151,7 @@ def analyze_square_frame(master_nodes, master_neighbors, L, boundary_thickness=1
     new_bottom = [original_to_new_map[idx] for idx in inside_original_indices[bottom_mask]]
     new_left = [original_to_new_map[idx] for idx in inside_original_indices[left_mask]]
     new_right = [original_to_new_map[idx] for idx in inside_original_indices[right_mask]]
-    
+    # Return results for analysis
     return {
         'L_value': L,
         'sub_graph_nodes': sub_nodes,

@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import linregress
 
+# Plot percolation statistics comparing Site vs Bond and Intersection vs Union
 def plot_percolation_stats_IU(L_values, mSI, sSI, mSU, sSU, mBI, sBI, mBU, sBU):
     plt.figure(figsize=(12, 7))
     plt.errorbar(L_values, mSI, yerr=sSI, fmt='o-', color='blue', label='Site I')
@@ -24,6 +25,7 @@ def plot_percolation_stats_IU(L_values, mSI, sSI, mSU, sSU, mBI, sBI, mBU, sBU):
     plt.title("Hat Tile Aperiodic Tiling", fontsize=16, pad=20)
     plt.show()
 
+# Extrapolate critical probability to infinite system size using finite-size scaling
 def plot_extrapolation_IU(L_values, mSI, mSU, mBI, mBU, exponent=-3/4):
     """
     Plots two separate figures for Site and Bond percolation extrapolation.
@@ -67,7 +69,7 @@ def plot_extrapolation_IU(L_values, mSI, mSU, mBI, mBU, exponent=-3/4):
             X_line = np.linspace(0, max(X), 100)
             Y_line = res.slope * X_line + pc_inf
             plt.plot(X_line, Y_line, '--', color=color, 
-                     label=f'{label} Fit: $p_c(\\infty)$={pc_inf:.5f}')
+                     label=f'{label} Fit: $p_c(\\infty)$={pc_inf:.10f}')
             
             # Mark the intercept at the Y-axis
             plt.plot(0, pc_inf, 'x', color=color, markersize=10)

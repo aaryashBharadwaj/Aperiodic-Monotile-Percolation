@@ -1,6 +1,7 @@
 import numpy as np
 import math
 
+# This code is adapted from the original paper on the Aperiodic Monotile
 
 # Constants
 sqrt3 = math.sqrt(3)
