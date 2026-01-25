@@ -16,15 +16,6 @@ def plot_percolation_stats_IU(L_values, mSI, sSI, mSU, sSU, mBI, sBI, mBU, sBU):
     plt.grid(True, alpha=0.3)
     plt.show()
 
-    print("\nDrawing tiling...")
-    fig = plt.figure(figsize=(16, 12), dpi=150)
-    ax = fig.add_axes([0, 0, 1, 1])
-    to_screen = [1, 0, 0, 0, 1, 0]
-    ax.set_aspect('equal', adjustable='box')
-    ax.axis('off')
-    plt.title("Hat Tile Aperiodic Tiling", fontsize=16, pad=20)
-    plt.show()
-
 # Extrapolate critical probability to infinite system size using finite-size scaling
 def plot_extrapolation_IU(L_values, mSI, mSU, mBI, mBU, exponent=-3/4):
     """

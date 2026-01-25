@@ -11,11 +11,11 @@ if __name__ == "__main__":
     # patch size
     parser.add_argument('--r', type=int, default=5)
     # number of trials per lattice size
-    parser.add_argument('--t', type=int, default=1000)
+    parser.add_argument('--t', type=int, default=100)
     # minimum lattice size
     parser.add_argument('--Lmin', type=float, default=10.0)
     # maximum lattice size
-    parser.add_argument('--Lmax', type=float, default=400.0)
+    parser.add_argument('--Lmax', type=float, default=50.0)
     # step size from lattice sizes
     parser.add_argument('--Lstep', type=float, default=10.0)
     # boundary thickness
