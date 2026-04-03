@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial import KDTree
-from hat_tiling import mul, transPt
+from hat_generator import mul, transPt
 
 # Builds a graph representation of the hat tiling by extracting nodes and edges.
 def build_neighbor_graph_fast(patch, level=0):
