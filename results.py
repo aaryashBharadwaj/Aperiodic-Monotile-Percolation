@@ -106,7 +106,11 @@ class PercolationResults:
                 "meta_trials", "meta_has_bond"}
         for k in data.files:
             if k.startswith("meta_") and k not in skip:
-                extra_meta[k[5:]] = data[k].item()
+                v = data[k]
+                try:
+                    extra_meta[k[5:]] = v.item()      # scalar metadata
+                except (ValueError, AttributeError):
+                    extra_meta[k[5:]] = v             # array-valued metadata (e.g. center tuple)
 
         obj = cls(
             tiling_type=tiling_type,

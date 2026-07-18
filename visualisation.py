@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 from results import PercolationResults
 from percolation import _wls_fit
 from matplotlib.ticker import ScalarFormatter
+import os
+
+
+def _savefig(res, name, outdir="figures_generated"):
+    """Save the current matplotlib figure. Lets headless/overnight (Agg) runs
+    produce the plots as files even though plt.show() is a no-op there."""
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(os.path.join(outdir, f"{res.tiling_type}_{name}.png"),
+                dpi=150, bbox_inches="tight")
 
 
 # plots the convergence of values with error bars
@@ -30,6 +39,7 @@ def plot_percolation_stats_IU(res: PercolationResults) -> None:
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
+    _savefig(res, "mean_ci")
     plt.show()
 
 
@@ -98,6 +108,7 @@ def plot_extrapolation_IU(res: PercolationResults, exponent: float = -3 / 4, con
         plt.grid(True, linestyle="--", alpha=0.6)
         plt.xlim(left=-0.005)
         plt.tight_layout()
+        _savefig(res, "fss_site" if "Site" in cfg["title"] else "fss_bond")
         plt.show()
 
 
@@ -204,6 +215,7 @@ def plot_hat_pc_dual_axis_final(res: PercolationResults, exponent: float = -3/4,
     
     plt.title(f"Extrapolated Thresholds: {res.tiling_type}", fontsize=14, pad=20)
     plt.tight_layout()
+    _savefig(res, "threshold_dualaxis")
     plt.show()
 
 def plot_all(res: PercolationResults) -> None:

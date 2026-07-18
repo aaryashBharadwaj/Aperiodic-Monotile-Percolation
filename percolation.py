@@ -66,20 +66,27 @@ class HatPercolationU(HatPercolationI):
 class percolationStatsI:
     def __init__(self, nodes, neighbours, top, bot, left, right, trials):
         self.trialResults = []
-        
+        self.pR, self.pD = [], []   # isotropy: each direction's first-onset fraction
         for _ in tqdm(range(trials), desc="Site I", leave=False):
             sim = HatPercolationI(nodes, neighbours, top, bot, left, right)
             # Pre-shuffle all sites once
             sites_order = list(range(sim.N))
             random.shuffle(sites_order)
-            
-            # Open sites in shuffled order until percolation
+
+            # Open sites until both directions span; note when each first spans
+            tb_onset = lr_onset = None
             for site in sites_order:
                 sim.open_site(site)
-                if sim.percolates():
+                tb = sim.wqfTB.connected(sim.vTop, sim.vBot)   # vertical (top-bottom)
+                lr = sim.wqfLR.connected(sim.vL, sim.vR)       # horizontal (left-right)
+                if tb and tb_onset is None: tb_onset = sim.openSite
+                if lr and lr_onset is None: lr_onset = sim.openSite
+                if tb and lr:
                     break
-            
+
             self.trialResults.append(sim.openSite / sim.N)
+            self.pD.append(tb_onset / sim.N)   # downward
+            self.pR.append(lr_onset / sim.N)   # rightward
             
     def trials_mean(self): return np.mean(self.trialResults)
     def trials_std(self): return np.std(self.trialResults)
@@ -241,3 +248,54 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
         print()
 
     return results
+
+# ---- Testing the nu = 4/3 assumption (width line) ----
+def nu_width_line(L_list, raw_I, raw_U, confidence=0.95, L_min=50):
+    # The width (sample std) of the crossing-fraction distribution scales as w(L) ~ L^{-1/nu},
+    # so log w vs log L is a straight line of slope -1/nu. We read nu = -1/slope from a
+    # weighted least-squares fit (the same _wls_fit used for p_c). L_min drops the smallest
+    # sizes, which carry the strongest finite-size corrections.
+    L = np.asarray(L_list, dtype=float)
+    raw_I = [np.asarray(r, dtype=float) for r in raw_I]
+    raw_U = [np.asarray(r, dtype=float) for r in raw_U]
+    if L_min is not None:
+        keep = L >= L_min
+        L = L[keep]
+        raw_I = [r for r, k in zip(raw_I, keep) if k]
+        raw_U = [r for r, k in zip(raw_U, keep) if k]
+    raw_A = [0.5 * (a + b) for a, b in zip(raw_I, raw_U)]
+    n, x = len(L), np.log(L)
+    t_crit = stats.t.ppf((1 + confidence) / 2, df=n - 2)
+    out = {}
+    for label, raw in [('I', raw_I), ('U', raw_U), ('A', raw_A)]:
+        w  = np.array([r.std(ddof=1) for r in raw])
+        T  = np.array([len(r) for r in raw], dtype=float)
+        se = 1.0 / np.sqrt(2.0 * (T - 1.0))          # standard error of log(sample std)
+        _, slope, _, slope_std, _ = _wls_fit(x, np.log(w), se, n, confidence)
+        nu, nu_err = -1.0 / slope, t_crit * slope_std / slope**2
+        out[label] = (nu, nu_err)
+        print(f"[{label}] nu = {nu:.4f} +/- {nu_err:.4f}   (2D value 4/3 = {4.0/3.0:.4f})")
+    return out
+
+# ---- Testing the isotropy assumption behind the p_A estimator ----
+def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
+    # p_R (horizontal) and p_D (vertical) crossing fractions are recorded in the same sweep
+    # (paired). We extrapolate their difference to L -> infinity; consistency with zero means
+    # no directional bias, which justifies the averaged estimator p_A.
+    L = np.asarray(L_list, dtype=float)
+    pR = [np.asarray(r, dtype=float) for r in pR]
+    pD = [np.asarray(r, dtype=float) for r in pD]
+    if L_min is not None:
+        keep = L >= L_min
+        L = L[keep]
+        pR = [r for r, k in zip(pR, keep) if k]
+        pD = [r for r, k in zip(pD, keep) if k]
+    n = len(L)
+    x = L ** (-1.0 / nu)
+    d_mean = np.array([(rR - rD).mean() for rR, rD in zip(pR, pD)])
+    d_se   = np.array([(rR - rD).std(ddof=1) / np.sqrt(len(rR)) for rR, rD in zip(pR, pD)])
+    d_inf, _, _, _, d_ci = _wls_fit(x, d_mean, d_se, n, confidence)
+    isotropic = d_ci[0] <= 0.0 <= d_ci[1]
+    print(f"[Isotropy] p_R - p_D (L->inf) = {d_inf:+.6f}   {int(confidence*100)}% CI "
+          f"[{d_ci[0]:+.6f}, {d_ci[1]:+.6f}]  ->  {'ISOTROPIC' if isotropic else 'anisotropic'}")
+    return d_inf, d_ci, isotropic

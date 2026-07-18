@@ -67,10 +67,10 @@ def build_tile_graph(patch, level=0, tol=1e-5):
 ##################################### SQUARE FRAME HAT TILING BUILD ##################################
 
 # Create the square-frame we analyse the percolation on
-def analyze_tile_square_frame(tile_centroids, tile_neighbors, L, boundary_thickness=1.0):
-    # Same center as graph_builder for consistency
-    center_x = 200.0
-    center_y = -100.0
+def analyze_tile_square_frame(tile_centroids, tile_neighbors, L, boundary_thickness=1.0,
+                              center_x=200.0, center_y=-100.0):
+    # Same center convention as graph_builder for consistency.
+    # For patch r=6 use center (515.0, -273.0). Defaults preserve original r=5 behaviour.
 
     x_min, x_max = center_x - L / 2.0, center_x + L / 2.0
     y_min, y_max = center_y - L / 2.0, center_y + L / 2.0
@@ -99,6 +99,14 @@ def analyze_tile_square_frame(tile_centroids, tile_neighbors, L, boundary_thickn
 
     sub_neighbors = [np.array(n, dtype=np.int32) for n in sub_neighbors]
 
+    # Edge list from adjacency (each unordered pair once) for bond percolation
+    sub_edges = []
+    for i in range(N_sub):
+        for j in sub_neighbors[i]:
+            if i < j:
+                sub_edges.append((i, j))
+    sub_edges = np.array(sub_edges, dtype=np.int32)
+
     # Boundary detection by centroid proximity to frame edges
     top_mask    = inside_coords[:, 1] >= y_max - boundary_thickness
     bottom_mask = inside_coords[:, 1] <= y_min + boundary_thickness
@@ -114,6 +122,7 @@ def analyze_tile_square_frame(tile_centroids, tile_neighbors, L, boundary_thickn
         'L_value': L,
         'sub_graph_nodes': inside_coords,
         'sub_graph_neighbors': sub_neighbors,
+        'sub_graph_edges': sub_edges,
         'node_count': N_sub,
         'top_boundary_nodes':    new_top,
         'bottom_boundary_nodes': new_bottom,

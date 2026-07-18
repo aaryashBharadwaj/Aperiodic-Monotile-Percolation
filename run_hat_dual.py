@@ -4,7 +4,7 @@ import datetime
 import numpy as np
 from hat_generator import H_init, T_init, P_init, F_init, constructPatch, constructMetatiles
 from hat_dual_graph_builder import build_tile_graph, analyze_tile_square_frame
-from percolation import percolationStatsI, percolationStatsU, extrapolate_pc_raw
+from percolation import percolationStatsI, percolationStatsU, percolationStatsBondI, percolationStatsBondU, extrapolate_pc_raw
 from results import PercolationResults
 from visualisation import plot_all
 
@@ -47,6 +47,7 @@ if __name__ == "__main__":
 
     l_values = np.arange(args.Lmin, args.Lmax + 1e-9, args.Lstep)
     raw_SI, raw_SU = [], []
+    raw_BI, raw_BU = [], []
     valid_L = []
 
     # main loop
@@ -74,22 +75,40 @@ if __name__ == "__main__":
             fd['left_boundary_nodes'], fd['right_boundary_nodes'],
             args.t
         )
+        statsBI = percolationStatsBondI(
+            fd['sub_graph_nodes'], fd['sub_graph_edges'],
+            fd['top_boundary_nodes'], fd['bottom_boundary_nodes'],
+            fd['left_boundary_nodes'], fd['right_boundary_nodes'],
+            args.t
+        )
+        statsBU = percolationStatsBondU(
+            fd['sub_graph_nodes'], fd['sub_graph_edges'],
+            fd['top_boundary_nodes'], fd['bottom_boundary_nodes'],
+            fd['left_boundary_nodes'], fd['right_boundary_nodes'],
+            args.t
+        )
 
         raw_SI.append(statsSI.trialResults)
         raw_SU.append(statsSU.trialResults)
+        raw_BI.append(statsBI.trialResults)
+        raw_BU.append(statsBU.trialResults)
         valid_L.append(l)
 
         print(f"  Tile site pc (I): {statsSI.trials_mean():.6f} ± {statsSI.trials_std():.6f}")
         print(f"  Tile site pc (U): {statsSU.trials_mean():.6f} ± {statsSU.trials_std():.6f}")
+        print(f"  Tile bond pc (I): {statsBI.trials_mean():.6f} ± {statsBI.trials_std():.6f}")
+        print(f"  Tile bond pc (U): {statsBU.trials_mean():.6f} ± {statsBU.trials_std():.6f}")
 
     print(f"\n{'='*60}\nEXTRAPOLATION RESULTS — Hat Tiling (Tile Graph)\n{'='*60}")
     print("\n--- Tile Site Percolation ---")
     extrapolate_pc_raw(valid_L, raw_SI, raw_SU)
+    print("\n--- Tile Bond Percolation ---")
+    extrapolate_pc_raw(valid_L, raw_BI, raw_BU)
 
     ts = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     res = PercolationResults(
         tiling_type="hat_tile", seed=seed, trials=args.t, L_values=valid_L,
-        raw_SI=raw_SI, raw_SU=raw_SU, raw_BI=None, raw_BU=None,
+        raw_SI=raw_SI, raw_SU=raw_SU, raw_BI=raw_BI, raw_BU=raw_BU,
         extra_meta={"r": args.r, "bt": args.bt},
     )
     res.save(f"{args.out_dir}/results_hat_tile_{ts}.npz")

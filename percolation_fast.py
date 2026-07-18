@@ -195,3 +195,59 @@ class percolationStatsI_par:
 
     def trials_mean(self): return np.mean(self.trialResults)
     def trials_std(self): return np.std(self.trialResults)
+
+
+class percolationStatsU_par:
+    """Site UNION criterion, thread-parallel. Seeded via SeedSequence(master_seed)
+    so results are reproducible (not bit-identical to the serial random.shuffle path)."""
+    def __init__(self, nodes, neighbours, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
+        N = len(nodes)
+        nbrs, starts = neighbors_to_csr(neighbours)
+        nbrs = nbrs.astype(np.int64); starts = starts.astype(np.int64)
+        it, ib, il, ir = _masks(N, top, bot, left, right)
+        seeds = np.random.SeedSequence(master_seed).spawn(trials)
+
+        def one(k):
+            rng = np.random.default_rng(seeds[k])
+            order = rng.permutation(N).astype(np.int64)
+            onset, _, _ = _site_trial(nbrs, starts, it, ib, il, ir, order, N, False)
+            return onset
+
+        with ThreadPoolExecutor(max_workers=nworkers) as ex:
+            res = list(ex.map(one, range(trials)))
+        self.trialResults = [o / N for o in res]
+
+    def trials_mean(self): return np.mean(self.trialResults)
+    def trials_std(self): return np.std(self.trialResults)
+
+
+class percolationStatsBondI_par:
+    """Bond INTERSECTION criterion, thread-parallel. Set intersection=False for UNION."""
+    def __init__(self, nodes, edges, top, bot, left, right, trials,
+                 master_seed=0, nworkers=_NW, intersection=True):
+        num_nodes = len(nodes)
+        edges = np.asarray(edges)
+        eu = edges[:, 0].astype(np.int64); ev = edges[:, 1].astype(np.int64)
+        M = len(edges)
+        top = np.asarray(list(top), dtype=np.int64);   bot = np.asarray(list(bot), dtype=np.int64)
+        left = np.asarray(list(left), dtype=np.int64); right = np.asarray(list(right), dtype=np.int64)
+        seeds = np.random.SeedSequence(master_seed).spawn(trials)
+        inter = intersection
+
+        def one(k):
+            rng = np.random.default_rng(seeds[k])
+            order = rng.permutation(M).astype(np.int64)
+            return _bond_trial(eu, ev, top, bot, left, right, order, num_nodes, M, inter)
+
+        with ThreadPoolExecutor(max_workers=nworkers) as ex:
+            res = list(ex.map(one, range(trials)))
+        self.trialResults = [o / M for o in res]
+
+    def trials_mean(self): return np.mean(self.trialResults)
+    def trials_std(self): return np.std(self.trialResults)
+
+
+class percolationStatsBondU_par(percolationStatsBondI_par):
+    def __init__(self, nodes, edges, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
+        super().__init__(nodes, edges, top, bot, left, right, trials,
+                         master_seed=master_seed, nworkers=nworkers, intersection=False)
