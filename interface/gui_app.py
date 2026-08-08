@@ -63,6 +63,24 @@ def cached_demo(lattice):
     return build_demo(lattice=lattice, n=40)
 
 
+@st.cache_data(show_spinner="Measuring d_f and ν from a few grids…")
+def _scaling_data(lattice):
+    """Scaling toy: run a handful of small grids and read off <S_max> (-> d_f) and the crossing-onset
+    width (-> ν). Cached, so it computes once per lattice. Deliberately small/rough -- the intuition,
+    not the measurement."""
+    import numpy as np
+    tiling, patch, sizes = (("Square", 150, [20, 40, 70, 110]) if lattice == "square"
+                            else ("Hat", 5, [25, 45, 70, 100]))
+    bundle = gb.build_graph(tiling, "direct", patch, None, None)
+    Ls, smax, width = [], [], []
+    for L in sizes:
+        s = gb.run_one(bundle, float(L), 400, 100 + L, 1.0, exponents=True)
+        if not s.get("usable"):
+            continue
+        Ls.append(L); smax.append(float(np.mean(s["s_max"]))); width.append(float(np.std(s["SI"], ddof=1)))
+    return Ls, smax, width
+
+
 # Self-contained HTML/SVG+JS for the Toy demo. The slider lives INSIDE the component, so dragging it
 # recolours the lattice client-side (union-find in JS) with no Streamlit rerun -- it updates smoothly
 # while you drag, not only on release. The Streamlit radios (lattice/open/criterion) rebuild it.
@@ -390,6 +408,27 @@ with tab_toy:
         st.caption(f"left-right / top-bottom crossings bracket it: p ≈ {k_union / kmax:.2f} to "
                    f"{k_inter / kmax:.2f}, estimate ≈ {est:.2f}"
                    + ("  (true: 0.5 bond, 0.5927 site)" if lattice == "square" else ""))
+
+    # --- separate scaling toy: the largest cluster above is ONE grid; run a few sizes and the two
+    #     universal exponents fall out of how it scales. ---
+    st.markdown("---")
+    st.markdown("**From one blob to the scaling laws.** The largest cluster above is a single grid. "
+                "Run a handful of grid sizes and watch *how* two quantities scale — that's where the "
+                "universal exponents come from:")
+    if st.button(f"▶ Run the scaling experiment ({lattice}, a few grids, ~15 s)", key="scaling_run"):
+        st.session_state["scaling_done"] = True
+    if st.session_state.get("scaling_done"):
+        _Ls, _sm, _w = _scaling_data(lattice)
+        if len(_Ls) >= 3:
+            st.pyplot(figs.scaling_figure(_Ls, _sm, _w), width="content")
+            st.caption("**Left** — the largest cluster grows as $\\langle S_{\\max}\\rangle\\sim L^{d_f}$; "
+                       "the log-log slope is the **fractal dimension** (2D percolation = 91/48 ≈ 1.90). "
+                       "**Right** — the crossing transition sharpens as $\\sim L^{-1/\\nu}$; its slope gives "
+                       "the **correlation-length exponent** ν (2D = 4/3 ≈ 1.33). A few small grids already "
+                       "land close — d_f cleanly, ν more roughly (it's a toy; the real runs use the full "
+                       "L-sweep to nail it).")
+        else:
+            st.caption("(scaling toy needs ≥3 usable grid sizes)")
 
 # ============================================================ VISUALISE engine
 with tab_vis:
