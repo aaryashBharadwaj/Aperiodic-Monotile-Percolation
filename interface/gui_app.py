@@ -26,9 +26,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 import interface.gui_backend as gb
 import visualiser.figures as figs
-import interface.demo as demo
+from interface.demo import build_demo          # imported as a name (a local `demo` dict shadows the module)
 import runner.jobs as jobs
-import interface.estimate as est
+import interface.estimate as estimate           # NOT `est` -- a local float `est` shadows it below
 from engine.percolation import l_sweep
 
 st.set_page_config(page_title="Aperiodic Percolation Portal", layout="wide")
@@ -59,7 +59,7 @@ def cached_visualise(tiling, size, a, b, graph_type, show_graph):
 
 @st.cache_data(show_spinner="Building demo…")
 def cached_demo(lattice):
-    return demo.build_demo(lattice=lattice, n=40)
+    return build_demo(lattice=lattice, n=40)
 
 
 # Self-contained HTML/SVG+JS for the Toy demo. The slider lives INSIDE the component, so dragging it
@@ -326,8 +326,8 @@ with st.sidebar:
     if st.button("Recalibrate timer", help="Re-measure the per-trial cost on this machine; "
                                            "the run-time estimates then use it."):
         with st.spinner("Calibrating…"):
-            c = est.calibrate()
-        per = est._c_per_node(c, 100_000) * 1e9   # ns per node·trial at a ~100k-node frame
+            c = estimate.calibrate()
+        per = estimate._c_per_node(c, 100_000) * 1e9   # ns per node·trial at a ~100k-node frame
         st.success(f"Recalibrated — estimates now use this machine (~{per:.0f} ns/node·trial "
                    "at a 100k-node frame).")
 
@@ -461,7 +461,7 @@ with tab_run:
         patch = st.slider(plabel, plo, phi, key=patch_key)
         # Size + ETA come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing even the
         # r=6 patch is instant. The (heavy) build happens only when you hit Run.
-        ge = est.geometry(member, kind, patch)
+        ge = estimate.geometry(member, kind, patch)
         usable_max = (ge[1] * 0.9) if ge else 200.0
         st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
                    "(bigger windows fall outside the tiling and are skipped).")
@@ -486,10 +486,10 @@ with tab_run:
     # runner sweep the identical sizes.
     Ls = l_sweep(L_min, L_max, gap)
 
-    plan = est.plan_run(member, kind, patch, Ls, T) if Ls else None
+    plan = estimate.plan_run(member, kind, patch, Ls, T) if Ls else None
     n_used = plan["n_usable"] if plan else 0
     eta = plan["eta"] if plan else 0.0
-    accuracy = est.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
+    accuracy = estimate.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
 
     with cnote:
         ref = gb.REFERENCE.get((member, kind))
