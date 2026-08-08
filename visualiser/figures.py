@@ -6,7 +6,6 @@ that module stays focused on the numerics; these render Matplotlib Figures the U
     fss_figure(result)                -> the I/U/A extrapolation plot (site & bond)
     convergence_figure(result)        -> per-size crossing estimate vs L (I & U)
     df_figure(result)                 -> log-log <S_max> vs L (fractal dimension d_f), if recorded
-    scaling_figure(Ls, smax, width)   -> toy demo: d_f (from <S_max>) + nu (from crossing width)
 
 Shared primitives (resolve_member, the Penrose helpers, family_member, constants) are imported from
 interface.gui_backend; the dependency is one-way (gui_backend never imports this module).
@@ -211,37 +210,3 @@ def df_figure(result):
     return fig
 
 
-def scaling_figure(Ls, smax, width):
-    """Toy scaling demo: from a handful of grid sizes, the largest cluster's size gives d_f
-    (<S_max> ~ L^{d_f}) and the crossing-transition width gives nu (width ~ L^{-1/nu}). Two log-log
-    panels, each with the fitted slope and the exact 2D-percolation reference. Deliberately rough
-    (few small grids) -- it's the intuition, not the measurement."""
-    Ls = np.asarray(Ls, float); logL = np.log(Ls); xl = np.array([Ls.min(), Ls.max()])
-    smax = np.asarray(smax, float); width = np.asarray(width, float)
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4.6))
-    # d_f from <S_max> ~ L^{d_f}
-    df = float(np.polyfit(logL, np.log(smax), 1)[0])
-    a1.plot(Ls, smax, "o", color="#6a3d9a", ms=9)
-    a1.plot(xl, np.exp(np.mean(np.log(smax) - df * logL)) * xl ** df, "-", color="#6a3d9a", lw=1.8,
-            label=f"fit:  $d_f$ = {df:.2f}")
-    DF2D = 91.0 / 48.0
-    a1.plot(xl, np.exp(np.log(smax[-1]) - DF2D * logL[-1]) * xl ** DF2D, "--", color="#999999", lw=1.3,
-            label="2D:  91/48 = 1.90")
-    a1.set_xscale("log"); a1.set_yscale("log")
-    a1.set_xlabel(r"grid size  $L$"); a1.set_ylabel(r"largest cluster  $\langle S_{\max}\rangle$")
-    a1.set_title(r"Fractal dimension  $d_f$")
-    a1.grid(True, which="both", ls="--", alpha=0.35); a1.legend(fontsize=9, loc="upper left")
-    # nu from width ~ L^{-1/nu}
-    inv_nu = float(-np.polyfit(logL, np.log(width), 1)[0])
-    nu = 1.0 / inv_nu if inv_nu > 0 else float("nan")
-    a2.plot(Ls, width, "s", color="#1f77b4", ms=9)
-    a2.plot(xl, np.exp(np.mean(np.log(width) + inv_nu * logL)) * xl ** (-inv_nu), "-", color="#1f77b4",
-            lw=1.8, label=fr"fit:  $\nu$ = {nu:.2f}")
-    a2.plot(xl, np.exp(np.log(width[-1]) + 0.75 * logL[-1]) * xl ** (-0.75), "--", color="#999999", lw=1.3,
-            label=r"2D:  $\nu$ = 4/3")
-    a2.set_xscale("log"); a2.set_yscale("log")
-    a2.set_xlabel(r"grid size  $L$"); a2.set_ylabel(r"crossing width  $\sigma$")
-    a2.set_title(r"Correlation length  $\nu$")
-    a2.grid(True, which="both", ls="--", alpha=0.35); a2.legend(fontsize=9, loc="upper right")
-    fig.tight_layout()
-    return fig

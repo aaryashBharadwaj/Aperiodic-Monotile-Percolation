@@ -123,3 +123,68 @@ def _crossings(demo, mode):
 
 # The demo is DRAWN client-side in gui_app.demo_component (HTML/SVG+JS) so its slider updates smoothly
 # on drag; Python only supplies the graph + fixed open orders (build_demo) and the crossings.
+
+
+def _span_onset_smax(N, neigh, top, bottom, left, right, order):
+    """Open SITES one at a time in `order` (incremental union-find with a per-cluster boundary bitmask)
+    and stop at the FIRST step that spans in either direction. Return (onset_step, s_max_at_onset) --
+    the number of sites open when it first spans, and the size of the largest cluster at that moment.
+    This is the finite grid's OWN percolation point for THIS realization; s_max/N is the share the
+    incipient (about-to-span) cluster fills, the quantity that scales as L^{d_f-2}."""
+    T, B, L, R = 1, 2, 4, 8
+    fm = [0] * N
+    for v in top:    fm[v] |= T
+    for v in bottom: fm[v] |= B
+    for v in left:   fm[v] |= L
+    for v in right:  fm[v] |= R
+    parent = list(range(N)); size = [1] * N
+    def find(x):
+        r = x
+        while parent[r] != r: r = parent[r]
+        while parent[x] != r: parent[x], x = r, parent[x]
+        return r
+    isopen = bytearray(N); s_max = 0
+    for step, v in enumerate(order, 1):
+        isopen[v] = 1
+        rv = find(v)
+        for nb in neigh[v]:
+            if isopen[nb]:
+                ra, rb = rv, find(nb)
+                if ra != rb:
+                    if size[ra] < size[rb]: ra, rb = rb, ra
+                    parent[rb] = ra; size[ra] += size[rb]; fm[ra] |= fm[rb]
+                    rv = ra
+        if size[rv] > s_max: s_max = size[rv]
+        m = fm[rv]
+        if (m & (T | B)) == (T | B) or (m & (L | R)) == (L | R):
+            return step, size[rv]
+    return N, s_max
+
+
+def build_scaling_demo(sizes=(14, 22, 34), seed=1, ensemble=24):
+    """Data for the interactive SCALING toy: several SQUARE site-grids of increasing size. For each grid
+    we run an ENSEMBLE of random fillings, driving EACH to its own first-spanning point, and record the
+    largest-cluster share s_max/N there. The ensemble MEAN share is the robust number the toy reports --
+    a single filling is far too noisy on grids this small. We also pick one REPRESENTATIVE filling (its
+    onset share closest to the ensemble median) for the live drawing, so the gold blob the reader sees
+    matches the averaged number underneath. Across sizes the mean share lines up (~scale invariant) and
+    gently shrinks -- the visible signature that the incipient cluster is a fractal (d_f < 2, so
+    s_max/N ~ L^{d_f-2}). Returns a list of small dicts (JSON-friendly)."""
+    rng = np.random.default_rng(seed)
+    grids = []
+    for n in sizes:
+        coords, edges, N, top, bottom, left, right, bbox = _square_demo(n)
+        neigh = [[] for _ in range(N)]
+        for a, b in edges:
+            neigh[a].append(b); neigh[b].append(a)
+        top, bottom, left, right = list(top), list(bottom), list(left), list(right)
+        orders = [[int(x) for x in rng.permutation(N)] for _ in range(ensemble)]
+        res = [_span_onset_smax(N, neigh, top, bottom, left, right, o) for o in orders]
+        onsets = [r[0] for r in res]; smax = [r[1] for r in res]
+        smax_mean = float(np.mean(smax))
+        rep = int(np.argsort(smax)[len(smax) // 2])          # median realization -> drawn one
+        grids.append({"n": n, "N": N, "coords": coords, "edges": edges,
+                      "top": top, "bottom": bottom, "left": left, "right": right, "bbox": bbox,
+                      "order": orders[rep], "onset": int(onsets[rep]),
+                      "smax_mean": smax_mean, "share_mean": 100.0 * smax_mean / N})
+    return grids

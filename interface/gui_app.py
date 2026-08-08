@@ -27,7 +27,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import interface.gui_backend as gb
 import visualiser.figures as figs
-from interface.demo import build_demo          # imported as a name (a local `demo` dict shadows the module)
+from interface.demo import build_demo, build_scaling_demo   # imported as names (a local `demo` dict shadows the module)
 import runner.jobs as jobs
 import interface.estimate as estimate           # NOT `est` -- a local float `est` shadows it below
 from engine.percolation import l_sweep
@@ -63,22 +63,9 @@ def cached_demo(lattice):
     return build_demo(lattice=lattice, n=40)
 
 
-@st.cache_data(show_spinner="Measuring d_f and ν from a few grids…")
-def _scaling_data(lattice):
-    """Scaling toy: run a handful of small grids and read off <S_max> (-> d_f) and the crossing-onset
-    width (-> ν). Cached, so it computes once per lattice. Deliberately small/rough -- the intuition,
-    not the measurement."""
-    import numpy as np
-    tiling, patch, sizes = (("Square", 150, [20, 40, 70, 110]) if lattice == "square"
-                            else ("Hat", 5, [25, 45, 70, 100]))
-    bundle = gb.build_graph(tiling, "direct", patch, None, None)
-    Ls, smax, width = [], [], []
-    for L in sizes:
-        s = gb.run_one(bundle, float(L), 400, 100 + L, 1.0, exponents=True)
-        if not s.get("usable"):
-            continue
-        Ls.append(L); smax.append(float(np.mean(s["s_max"]))); width.append(float(np.std(s["SI"], ddof=1)))
-    return Ls, smax, width
+@st.cache_data(show_spinner="Building the scaling grids…")
+def cached_scaling():
+    return build_scaling_demo()
 
 
 # Self-contained HTML/SVG+JS for the Toy demo. The slider lives INSIDE the component, so dragging it
@@ -180,6 +167,114 @@ def demo_component(demo, mode, jump_k):
                "left": list(demo["left"]), "right": list(demo["right"]),
                "bbox": demo["bbox"], "jump": int(jump_k)}
     components.html(_DEMO_HTML.replace("__DATA__", json.dumps(payload)), height=540)
+
+
+# Interactive SCALING toy: three square grids of increasing size, one shared "how open" slider driving
+# them all. Client-side union-find per grid finds the largest cluster (gold), and shows its % share --
+# at percolation the shares LINE UP across sizes yet shrink as the grid grows (the fractal signature).
+_SCALING_HTML = r"""
+<style>
+ .scw{font-family:sans-serif;color:#333;}
+ .scrow{display:flex;gap:18px;align-items:flex-end;justify-content:center;}
+ .sccol{display:flex;flex-direction:column;align-items:center;}
+ .scsvg{background:#fff;border:1px solid #eee;}
+ .sclbl{font-size:13px;margin-top:6px;text-align:center;line-height:1.3;} .scok{color:#1a7f37;font-weight:600;}
+ .scctl{display:flex;gap:12px;align-items:center;margin:14px 4px 6px;}
+ .scb{padding:5px 12px;border:1px solid #ccc;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:13px;}
+ .scsl{flex:1;} .scsum{font-size:14px;margin:6px 2px;min-height:3.4em;}
+</style>
+<div class="scw">
+ <div class="scrow">
+  <div class="sccol"><svg class="scsvg" id="sc_svg_0" width="170" height="170"></svg><div class="sclbl" id="sc_lbl_0"></div></div>
+  <div class="sccol"><svg class="scsvg" id="sc_svg_1" width="215" height="215"></svg><div class="sclbl" id="sc_lbl_1"></div></div>
+  <div class="sccol"><svg class="scsvg" id="sc_svg_2" width="260" height="260"></svg><div class="sclbl" id="sc_lbl_2"></div></div>
+ </div>
+ <div class="scctl">
+  <button class="scb" id="sc_jump" title="Jump to the percolation point">Jump to percolation</button>
+  <input class="scsl" id="sc_sl" type="range" min="0" max="1000" value="0" title="Drag to open more of each grid">
+  <span id="sc_frac"></span>
+ </div>
+ <div class="scsum" id="sc_sum"></div>
+</div>
+<script>
+const G=__DATA__;
+(function(){
+ const NS="http://www.w3.org/2000/svg", GOLD="#f4b400";
+ const grids=G.grids.map((g,gi)=>{
+  const svg=document.getElementById("sc_svg_"+gi);
+  const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.04;
+  svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
+  svg.setAttribute("preserveAspectRatio","xMidYMid meet");
+  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.36*u;
+  const nEl=g.coords.map(c=>{const ci=document.createElementNS(NS,"circle");ci.setAttribute("cx",c[0]);ci.setAttribute("cy",fy(c[1]));ci.setAttribute("r",R);svg.appendChild(ci);return ci;});
+  return {g,nEl,R,setT:new Set(g.top),setB:new Set(g.bottom),setL:new Set(g.left),setR:new Set(g.right)};
+ });
+ // d_f from the three ensemble-mean largest-cluster sizes: slope of log(smax_mean) vs log(L).
+ const dfFit=(()=>{
+  const x=grids.map(G3=>Math.log(G3.g.n)),y=grids.map(G3=>Math.log(G3.g.smax_mean));
+  const mx=x.reduce((a,b)=>a+b,0)/x.length,my=y.reduce((a,b)=>a+b,0)/y.length;
+  let sxy=0,sxx=0;for(let i=0;i<x.length;i++){sxy+=(x[i]-mx)*(y[i]-my);sxx+=(x[i]-mx)*(x[i]-mx);}
+  return sxx?sxy/sxx:NaN;
+ })();
+ // Draw grid gi with its first k sites open (of the representative filling); return the live largest %.
+ function draw(gi,k){
+  const G3=grids[gi],g=G3.g,N=g.N,edges=g.edges,order=g.order;
+  const par=new Int32Array(N);for(let i=0;i<N;i++)par[i]=i;
+  const open=new Uint8Array(N);
+  function find(x){let r=x;while(par[r]!==r)r=par[r];while(par[x]!==r){const n=par[x];par[x]=r;x=n;}return r;}
+  for(let i=0;i<k;i++)open[order[i]]=1;
+  for(let e=0;e<edges.length;e++){const a=edges[e][0],b=edges[e][1];if(open[a]&&open[b]){const ra=find(a),rb=find(b);if(ra!==rb)par[ra]=rb;}}
+  const sz=new Int32Array(N);let bigR=-1,bigN=0;
+  for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
+  let t=false,bt=false,l=false,r=false;
+  if(bigR>=0)for(let v=0;v<N;v++){if(open[v]&&find(v)===bigR){if(G3.setT.has(v))t=true;if(G3.setB.has(v))bt=true;if(G3.setL.has(v))l=true;if(G3.setR.has(v))r=true;}}
+  const span=(t&&bt)||(l&&r);
+  for(let v=0;v<N;v++){const ci=G3.nEl[v];
+   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",GOLD);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.22);}
+   else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
+   else{ci.setAttribute("fill","#e3e3e9");ci.removeAttribute("stroke");}}
+  const pct=N?100*bigN/N:0;
+  document.getElementById("sc_lbl_"+gi).innerHTML="L = "+g.n+"<br>largest: <b>"+pct.toFixed(0)+"%</b>"+(span?" <span class=scok>spans</span>":"");
+  return pct;
+ }
+ // Manual mode: same occupation fraction across all grids (drag to watch them fill together).
+ function slide(frac){
+  grids.forEach((G3,gi)=>draw(gi,Math.floor(frac*G3.g.N)));
+  document.getElementById("sc_frac").innerHTML="open fraction p = <b>"+frac.toFixed(3)+"</b>";
+  let msg;
+  if(frac<0.45)msg="Below the percolation point — each grid's largest cluster is small and local. Drag right, or hit <b>Jump to percolation</b>.";
+  else if(frac>0.68)msg="Above the percolation point — the grids are saturating and the largest cluster fills most of each.";
+  else msg="Around the percolation point the largest cluster suddenly becomes grid-spanning. Hit <b>Jump to percolation</b> to snap each grid to its own first-spanning point.";
+  document.getElementById("sc_sum").innerHTML=msg;
+ }
+ // Percolation mode: snap EACH grid to its OWN first-spanning point; report the ENSEMBLE-mean share.
+ function jump(){
+  grids.forEach((G3,gi)=>draw(gi,G3.g.onset));
+  const shares=grids.map(G3=>G3.g.share_mean);
+  document.getElementById("sc_frac").innerHTML="<b>each grid at its own first-spanning point</b>";
+  document.getElementById("sc_sum").innerHTML=
+   "Averaged over "+G.ens+" fillings, each driven to its <b>own</b> first-spanning point, the largest cluster fills "
+   +"<b>"+shares.map(s=>s.toFixed(0)+"%").join(" &middot; ")+"</b> of the grid — the shares <b>line up</b> across very "
+   +"different sizes (scale invariance), and <b>gently shrink</b> as the grid grows. A solid 2D region would stay ~100%, "
+   +"a 1D line would vanish; the incipient cluster sits between — a <b>fractal</b>. Those three sizes alone already give "
+   +"⟨S<sub>max</sub>⟩ ~ L<sup>d_f</sup> with <b>d_f ≈ "+dfFit.toFixed(2)+"</b> (2D exact 91/48 = 1.90).";
+ }
+ const sl=document.getElementById("sc_sl");
+ sl.addEventListener("input",()=>slide(+sl.value/1000));
+ document.getElementById("sc_jump").addEventListener("click",jump);
+ slide(0);
+})();
+</script>
+"""
+
+
+def scaling_component(grids):
+    payload = {"ens": 24, "grids": [
+        {"n": g["n"], "N": g["N"], "coords": g["coords"], "edges": g["edges"], "order": g["order"],
+         "bbox": g["bbox"], "top": g["top"], "bottom": g["bottom"], "left": g["left"], "right": g["right"],
+         "onset": g["onset"], "smax_mean": g["smax_mean"], "share_mean": g["share_mean"]}
+        for g in grids]}
+    components.html(_SCALING_HTML.replace("__DATA__", json.dumps(payload)), height=400)
 
 
 def _fig_bytes(fig):
@@ -412,23 +507,11 @@ with tab_toy:
     # --- separate scaling toy: the largest cluster above is ONE grid; run a few sizes and the two
     #     universal exponents fall out of how it scales. ---
     st.markdown("---")
-    st.markdown("**From one blob to the scaling laws.** The largest cluster above is a single grid. "
-                "Run a handful of grid sizes and watch *how* two quantities scale — that's where the "
-                "universal exponents come from:")
-    if st.button(f"▶ Run the scaling experiment ({lattice}, a few grids, ~15 s)", key="scaling_run"):
-        st.session_state["scaling_done"] = True
-    if st.session_state.get("scaling_done"):
-        _Ls, _sm, _w = _scaling_data(lattice)
-        if len(_Ls) >= 3:
-            st.pyplot(figs.scaling_figure(_Ls, _sm, _w), width="content")
-            st.caption("**Left** — the largest cluster grows as $\\langle S_{\\max}\\rangle\\sim L^{d_f}$; "
-                       "the log-log slope is the **fractal dimension** (2D percolation = 91/48 ≈ 1.90). "
-                       "**Right** — the crossing transition sharpens as $\\sim L^{-1/\\nu}$; its slope gives "
-                       "the **correlation-length exponent** ν (2D = 4/3 ≈ 1.33). A few small grids already "
-                       "land close — d_f cleanly, ν more roughly (it's a toy; the real runs use the full "
-                       "L-sweep to nail it).")
-        else:
-            st.caption("(scaling toy needs ≥3 usable grid sizes)")
+    st.markdown("**From one blob to the scaling law.** The largest cluster above was a *single* grid. "
+                "Here are three square grids of increasing size — drag the slider (or hit **Jump to "
+                "percolation**) to drive them all to the percolation point and watch the largest cluster "
+                "(gold) in each. The point isn't any one grid; it's how the numbers below them behave.")
+    scaling_component(cached_scaling())
 
 # ============================================================ VISUALISE engine
 with tab_vis:
