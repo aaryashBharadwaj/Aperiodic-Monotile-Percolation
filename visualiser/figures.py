@@ -5,6 +5,7 @@ that module stays focused on the numerics; these render Matplotlib Figures the U
     visualise(tiling, size, ...)      -> a rendered tiling Figure (+ optional graph overlay)
     fss_figure(result)                -> the I/U/A extrapolation plot (site & bond)
     convergence_figure(result)        -> per-size crossing estimate vs L (I & U)
+    df_figure(result)                 -> log-log <S_max> vs L (fractal dimension d_f), if recorded
 
 Shared primitives (resolve_member, the Penrose helpers, family_member, constants) are imported from
 interface.gui_backend; the dependency is one-way (gui_backend never imports this module).
@@ -172,6 +173,38 @@ def convergence_figure(result):
     ax.set_xlabel(r"linear system size  $L$")
     ax.set_ylabel(r"crossing $p_c(L)$")
     ax.grid(True, ls="--", alpha=0.4)
+    ax.legend(loc="best", fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def df_figure(result):
+    """Log-log <S_max> vs L: the incipient spanning cluster's mass grows as L^{d_f}, so the slope on
+    log axes IS the fractal dimension. Shows the data, the fitted d_f line, and the exact 2D-percolation
+    reference (91/48). Returns a Figure, or None if the run has no exponent (s_max) data."""
+    e = result.get("exponents")
+    if e is None or result.get("raw_smax") is None:
+        return None
+    L = np.asarray(result["L"], float)
+    smax = [np.asarray(s, float) for s in result["raw_smax"]]
+    mean = np.array([s.mean() for s in smax])
+    se = np.array([s.std(ddof=1) / np.sqrt(len(s)) for s in smax])
+    d_f, (lo, hi) = e["d_f"], e["d_f_ci"]
+    logL = np.log(L); xl = np.array([L.min(), L.max()])
+    fig, ax = plt.subplots(figsize=(7, 5.5))
+    ax.errorbar(L, mean, yerr=se, fmt="o", color="#6a3d9a", ms=6, capsize=3, label=r"data  $\langle S_{\max}\rangle$")
+    a = np.mean(np.log(mean) - d_f * logL)                           # anchor the fitted slope to the data
+    ax.plot(xl, np.exp(a) * xl ** d_f, "-", color="#6a3d9a", lw=1.7,
+            label=f"fit:  $d_f$ = {d_f:.3f}  [{lo:.3f}, {hi:.3f}]")
+    DF2D = 91.0 / 48.0                                               # exact 2D percolation value
+    a2 = np.log(mean[-1]) - DF2D * logL[-1]
+    ax.plot(xl, np.exp(a2) * xl ** DF2D, "--", color="#888888", lw=1.4,
+            label=f"2D percolation:  91/48 = {DF2D:.4f}")
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.set_xlabel(r"linear system size  $L$")
+    ax.set_ylabel(r"incipient cluster size  $\langle S_{\max}\rangle$")
+    ax.set_title(r"Fractal dimension:  $\langle S_{\max}\rangle \sim L^{d_f}$")
+    ax.grid(True, which="both", ls="--", alpha=0.35)
     ax.legend(loc="best", fontsize=9)
     fig.tight_layout()
     return fig

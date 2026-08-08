@@ -122,8 +122,13 @@ const D=__DATA__;
   const span=new Set();let tb=false,lr=false;
   for(const r in rh){const h=rh[r];if(h.t&&h.b){span.add(+r);tb=true;}if(h.l&&h.r){span.add(+r);lr=true;}}
   const cOf=v=>{const r=find(v);return span.has(r)?GOLD:col(rmin[r]);};
-  for(let v=0;v<N;v++){const ci=nEl[v];
-   if(mode==="bond"){ci.setAttribute("r",R_C);ci.setAttribute("fill","#9a9aa2");ci.removeAttribute("stroke");}
+  // Largest cluster = the incipient infinite cluster (its size ~ L^d_f at criticality). Track it and
+  // ring it so you can watch it grow and take over as you drag toward the percolation point.
+  const sz={}; open.forEach(v=>{const r=find(v);sz[r]=(sz[r]||0)+1;});
+  let bigR=-1,bigN=0; for(const r in sz){if(sz[r]>bigN){bigN=sz[r];bigR=+r;}}
+  for(let v=0;v<N;v++){const ci=nEl[v];const big=open.has(v)&&find(v)===bigR;
+   if(big){ci.setAttribute("r",R_O*1.18);ci.setAttribute("fill",cOf(v));ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",W_THIN);}
+   else if(mode==="bond"){ci.setAttribute("r",R_C);ci.setAttribute("fill","#9a9aa2");ci.removeAttribute("stroke");}
    else if(open.has(v)){ci.setAttribute("r",R_O);ci.setAttribute("fill",cOf(v));ci.setAttribute("stroke","#fff");ci.setAttribute("stroke-width",W_THIN*0.5);}
    else {ci.setAttribute("r",R_C);ci.setAttribute("fill","#d8d8dd");ci.removeAttribute("stroke");}}
   eEl.forEach(l=>l.setAttribute("visibility","hidden"));
@@ -131,7 +136,9 @@ const D=__DATA__;
    l.setAttribute("x1",co[a][0]);l.setAttribute("y1",fy(co[a][1]));l.setAttribute("x2",co[b][0]);l.setAttribute("y2",fy(co[b][1]));
    l.setAttribute("stroke",cOf(a));l.setAttribute("stroke-width",mode==="bond"?W_THICK:W_THIN);}
   const unit=mode==="site"?"sites":"bonds";
+  const bigFrac=open.size?(100*bigN/open.size).toFixed(0):"0";
   document.getElementById("tstat").innerHTML="<b>"+k+"/"+kmax+"</b> "+unit+" open &nbsp;·&nbsp; p ≈ <b>"+(k/kmax).toFixed(2)+"</b>"
+   +"<br>Largest cluster <span style='outline:1px solid #111;padding:0 2px;'>◯</span> : <b>"+bigN+"</b> sites &nbsp;·&nbsp; "+bigFrac+"% of what's open"
    +"<br>Left ↔ right: "+(lr?"<span class=ok>spanning</span>":"<span class=no>not yet</span>")
    +" &nbsp;|&nbsp; Top ↔ bottom: "+(tb?"<span class=ok>spanning</span>":"<span class=no>not yet</span>");
  }
@@ -235,6 +242,11 @@ def show_results(res, label, key_prefix, meta=None):
         st.caption("d_f (measured) with ν (from the crossing width) fix the class; the other static "
                    f"exponents follow by hyperscaling — τ = {h['tau']:.3f}, γ/ν = {h['gamma_nu']:.3f}, "
                    f"β/ν = {h['beta_nu']:.4f} — and are not measured directly.")
+        fdf = figs.df_figure(res)
+        if fdf is not None:
+            st.pyplot(fdf, width="content")
+            st.download_button("Download d_f plot", _fig_bytes(fdf), mime="image/png",
+                               file_name=f"{key_prefix}_df.png", key=f"{key_prefix}_dl_df")
 
     f1 = figs.fss_figure(res)
     st.pyplot(f1, width="content")
