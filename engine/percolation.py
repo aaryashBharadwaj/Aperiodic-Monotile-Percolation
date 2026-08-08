@@ -251,5 +251,71 @@ class percolationStatsBondU_par(percolationStatsBondI_par):
                          master_seed=master_seed, nworkers=nworkers, intersection=False)
 
 
+# ---- Block B: cluster-structure readout for the critical exponents (d_f, gamma/nu, tau) ----
+# The two spanning union-finds above carry VIRTUAL boundary nodes, which glue every boundary site
+# into one artificial mega-cluster -- so their sizes are fiction. Here we maintain a THIRD, PLAIN
+# union-find over real sites only (no virtual nodes) and track the largest real cluster INCREMENTALLY
+# as sites merge; at the first-spanning onset (the self-consistent pseudo-critical point -- NOT a
+# fixed external p_c) that largest cluster is the incipient infinite cluster, whose size s_max ~
+# L^{d_f} gives the fractal dimension. We deliberately record ONLY s_max (d_f): the other static
+# exponents (gamma/nu, tau, beta/nu) follow from d_f by hyperscaling, and their DIRECT cluster-moment
+# estimators are open-boundary biased, so we don't measure them. Everything is combinatorial (site
+# counts), no coordinates -- consistent with the graph-only model.
+@njit(cache=True, nogil=True)
+def _site_cluster_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, N):
+    parentTB = np.arange(N + 2); sizeTB = np.ones(N + 2, dtype=np.int64)   # spanning detection (TB)
+    parentLR = np.arange(N + 2); sizeLR = np.ones(N + 2, dtype=np.int64)   # spanning detection (LR)
+    parentC  = np.arange(N);     sizeC  = np.ones(N,     dtype=np.int64)   # PLAIN: real sites only
+    opened = np.zeros(N, dtype=np.bool_)
+    vTop = N; vBot = N + 1; vL = N; vR = N + 1
+    onset = -1; s_max = 0
+    for step in range(N):
+        idx = order[step]
+        opened[idx] = True
+        if is_top[idx]:   _union(parentTB, sizeTB, vTop, idx)
+        if is_bot[idx]:   _union(parentTB, sizeTB, vBot, idx)
+        if is_left[idx]:  _union(parentLR, sizeLR, vL, idx)
+        if is_right[idx]: _union(parentLR, sizeLR, vR, idx)
+        for j in range(starts[idx], starts[idx + 1]):
+            nb = nbrs[j]
+            if opened[nb]:
+                _union(parentTB, sizeTB, idx, nb)
+                _union(parentLR, sizeLR, idx, nb)
+                _union(parentC,  sizeC,  idx, nb)     # real-real merges only
+        s = sizeC[_find(parentC, idx)]                 # size of the cluster idx now sits in
+        if s > s_max:                                  # running max -> largest cluster so far (O(1))
+            s_max = s
+        tb = _find(parentTB, vTop) == _find(parentTB, vBot)
+        lr = _find(parentLR, vL) == _find(parentLR, vR)
+        if tb or lr:                                   # UNION onset = first spanning (incipient cluster)
+            onset = step + 1
+            break
+    return onset, s_max
+
+
+class percolationStatsExponents_par:
+    """OPT-IN Block-B pass: at the first-spanning onset, read the largest real-sites cluster (the
+    incipient infinite cluster) -> s_max per trial -> d_f (<s_max> ~ L^{d_f}). NOT run by the
+    threshold sweep -- a deliberate extra pass, requested only when d_f is wanted. Records s_max ONLY
+    (see the note above the kernel: gamma/nu and tau follow from d_f by hyperscaling and their direct
+    estimators are open-boundary biased, so we do not measure them)."""
+    def __init__(self, nodes, neighbours, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
+        N = len(nodes)
+        nbrs, starts = neighbors_to_csr(neighbours)
+        nbrs = nbrs.astype(np.int64); starts = starts.astype(np.int64)
+        it, ib, il, ir = _masks(N, top, bot, left, right)
+        seeds = np.random.SeedSequence(master_seed).spawn(trials)
+
+        def one(k):
+            rng = np.random.default_rng(seeds[k])
+            order = rng.permutation(N).astype(np.int64)
+            return _site_cluster_trial(nbrs, starts, it, ib, il, ir, order, N)
+
+        with ThreadPoolExecutor(max_workers=nworkers) as ex:
+            res = list(ex.map(one, range(trials)))
+        self.N = N
+        self.s_max = np.array([r[1] for r in res], dtype=float)
+
+
 # Analysis of results (WLS p_c extrapolation + direction-bias check) now lives in engine/analysis.py
 # so this module stays pure simulation (Newman-Ziff kernels + trial classes).

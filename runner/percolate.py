@@ -51,6 +51,9 @@ def main():
     ap.add_argument("--out-dir", default=None, help="where the result .npz is saved (default results_output/)")
     ap.add_argument("--jobs-dir", default=None, help="(accepted for GUI compatibility; unused)")
     ap.add_argument("--name", default="", help="output file name (default auto from parameters)")
+    ap.add_argument("--exponents", action="store_true",
+                    help="also run the Block-B cluster pass (records s_max/chi/histogram -> d_f, "
+                         "gamma/nu, tau). Adds an extra sweep + O(N) snapshot per size (~+30%% time).")
     args = ap.parse_args()
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # percolate is in runner/
@@ -91,8 +94,8 @@ def main():
             "result_file": result_file, "error": error, "name": args.name})
 
     # Accumulators (+ resume from a matching checkpoint if one exists).
-    # rPR/rPD are the site direction-bias crossings; rBPR/rBPD the bond ones.
-    valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, skipped = ([] for _ in range(10))
+    # rPR/rPD site direction-bias crossings; rBPR/rBPD bond; rSM the Block-B largest-cluster sizes (d_f).
+    valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, skipped = ([] for _ in range(11))
     start_i = 0
     if os.path.exists(ckpt):
         try:
@@ -103,18 +106,20 @@ def main():
             rBI = [row for row in z["BI"]]; rBU = [row for row in z["BU"]]
             rPR = [row for row in z["PR"]]; rPD = [row for row in z["PD"]]
             rBPR = [row for row in z["BPR"]]; rBPD = [row for row in z["BPD"]]
+            if "SM" in z and z["SM"].size:
+                rSM = [row for row in z["SM"]]
             skipped = [float(x) for x in z["skipped"]]
             print(f"  resuming from checkpoint at size {start_i}/{total}", flush=True)
         except Exception:
             start_i = 0  # unreadable/old-format checkpoint -> start clean
-            valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, skipped = ([] for _ in range(10))
+            valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, skipped = ([] for _ in range(11))
 
     def save_ckpt(next_i):
         np.savez(ckpt_tmp,
                  Lvals=np.array(valid, float), SI=np.array(rSI, float), SU=np.array(rSU, float),
                  BI=np.array(rBI, float), BU=np.array(rBU, float), PR=np.array(rPR, float),
                  PD=np.array(rPD, float), BPR=np.array(rBPR, float), BPD=np.array(rBPD, float),
-                 skipped=np.array(skipped, float), next_i=next_i)
+                 SM=np.array(rSM, float), skipped=np.array(skipped, float), next_i=next_i)
         jobs._safe_replace(ckpt_tmp, ckpt)
 
     try:
@@ -135,7 +140,8 @@ def main():
                 break
             L = Ls[i]
             try:
-                step = gb.run_one(bundle, L, args.trials, args.seed + i * 4, bt)
+                # stride 8 per size: offsets 0-3 = thresholds, 4 = exponents (seed_base+4), 5-7 spare.
+                step = gb.run_one(bundle, L, args.trials, args.seed + i * 8, bt, exponents=args.exponents)
             except Exception as ex:
                 step = {"usable": False, "L": float(L), "err": str(ex)}
             if step.get("usable"):
@@ -143,6 +149,8 @@ def main():
                 rBI.append(step["BI"]); rBU.append(step["BU"])
                 rPR.append(step["pR"]); rPD.append(step["pD"])
                 rBPR.append(step["bond_pR"]); rBPD.append(step["bond_pD"])
+                if args.exponents:
+                    rSM.append(step["s_max"])
                 ms = sum(step["SI"]) / len(step["SI"]); mb = sum(step["BI"]) / len(step["BI"])
                 line = f"size {i+1}/{total}  L={L:.0f}  N={step['N']:,}  site={ms:.3f}  bond={mb:.3f}"
             else:
@@ -155,7 +163,8 @@ def main():
 
         # Finalise: extrapolate (prints the p_c + direction-bias summary to stdout) + SAVE.
         print("\n" + "=" * 60 + f"\n{member} / {kind} extrapolation\n" + "=" * 60, flush=True)
-        res = gb.extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, rPR, rPD, rBPR, rBPD)
+        res = gb.extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, rPR, rPD, rBPR, rBPD,
+                                    rSM if args.exponents else None)
         result_file = None
         if valid:
             default_name = args.name or (

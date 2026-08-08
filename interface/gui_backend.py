@@ -28,8 +28,9 @@ from builders.direct_graph_builder import (build_neighbor_graph_fast, analyze_sq
                                   largest_square_center, graph_from_polygons)
 from builders.dual_graph_builder import collect_leaf_polygons, build_dual_from_polygons, analyze_tile_square_frame
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
-                         percolationStatsBondI_par, percolationStatsBondU_par)
-from engine.analysis import extrapolate_pc_raw, isotropy_test
+                         percolationStatsBondI_par, percolationStatsBondU_par,
+                         percolationStatsExponents_par)
+from engine.analysis import extrapolate_pc_raw, isotropy_test, fit_exponents
 from visualiser.run_tiling_render import _threshold_class
 from generators.family_geometry import periodic_graph, periodic_polys
 from generators.periodic_tiling_generator import square_tiles, triangular_tris   # validated periodic geometry
@@ -230,7 +231,7 @@ def _frame_usable(fd):
         len(fd["left_boundary_nodes"]), len(fd["right_boundary_nodes"])) > 0)
 
 
-def run_one(bundle, L, T, seed_base, bt=1.0):
+def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False):
     """Percolate ONE L-window (the 4 estimators). Returns a dict; usable=False if the frame is empty
     or pokes outside the tiling. Factored out so the GUI can drive the sweep one size per rerun --
     that's what makes it interruptible (a Stop button is processed between steps)."""
@@ -245,11 +246,18 @@ def run_one(bundle, L, T, seed_base, bt=1.0):
     # keep the intersection objects: pR/pD (site) and bond_pR/bond_pD validate the p_A estimators
     si = percolationStatsI_par(*A, T, master_seed=seed_base + 0)
     bi = percolationStatsBondI_par(*E, T, master_seed=seed_base + 2)
-    return {"usable": True, "L": float(L), "N": fd["node_count"],
-            "SI": si.trialResults, "pR": si.pR, "pD": si.pD,
-            "SU": percolationStatsU_par(*A, T, master_seed=seed_base + 1).trialResults,
-            "BI": bi.trialResults, "bond_pR": bi.pR, "bond_pD": bi.pD,
-            "BU": percolationStatsBondU_par(*E, T, master_seed=seed_base + 3).trialResults}
+    out = {"usable": True, "L": float(L), "N": fd["node_count"],
+           "SI": si.trialResults, "pR": si.pR, "pD": si.pD,
+           "SU": percolationStatsU_par(*A, T, master_seed=seed_base + 1).trialResults,
+           "BI": bi.trialResults, "bond_pR": bi.pR, "bond_pD": bi.pD,
+           "BU": percolationStatsBondU_par(*E, T, master_seed=seed_base + 3).trialResults}
+    if exponents:
+        # OPT-IN Block-B pass (extra sweep, s_max tracked incrementally): records the per-trial
+        # largest cluster at first-spanning (the incipient infinite cluster) -> d_f. seed_base+4
+        # keeps it independent of the four threshold seeds.
+        ex = percolationStatsExponents_par(*A, T, master_seed=seed_base + 4)
+        out["s_max"] = ex.s_max
+    return out
 
 
 def _pick_lmin(valid, floor=50):
@@ -259,16 +267,16 @@ def _pick_lmin(valid, floor=50):
 
 
 def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=None,
-                       raw_bond_pR=None, raw_bond_pD=None):
-    """Assemble the result dict + the FULL analysis: p_c extrapolation (I/U/A) and the direction-bias
-    check (if pR/pD present) that validates the averaged estimator -- separately for the site
-    (raw_pR/raw_pD -> 'isotropy') and bond (raw_bond_pR/raw_bond_pD -> 'isotropy_bond') thresholds.
-    Needs >=3 sizes; fields stay None otherwise. Works on a PARTIAL sweep too, so a stopped run still
-    yields whatever it collected."""
+                       raw_bond_pR=None, raw_bond_pD=None, raw_smax=None):
+    """Assemble the result dict + the FULL analysis: p_c extrapolation (I/U/A); the direction-bias
+    check (if pR/pD present) -- site (raw_pR/raw_pD -> 'isotropy') and bond (raw_bond_* -> 'isotropy_bond');
+    and d_f (if raw_smax present -> 'exponents'). Needs >=3 sizes; fields stay None otherwise. Works on
+    a PARTIAL sweep too, so a stopped run still yields whatever it collected."""
     out = {"L": valid, "raw_SI": rSI, "raw_SU": rSU, "raw_BI": rBI, "raw_BU": rBU,
            "skipped": skipped, "raw_pR": raw_pR, "raw_pD": raw_pD,
-           "raw_bond_pR": raw_bond_pR, "raw_bond_pD": raw_bond_pD,
-           "site": None, "bond": None, "isotropy": None, "isotropy_bond": None, "lmin": None}
+           "raw_bond_pR": raw_bond_pR, "raw_bond_pD": raw_bond_pD, "raw_smax": raw_smax,
+           "site": None, "bond": None, "isotropy": None, "isotropy_bond": None,
+           "exponents": None, "lmin": None}
     if len(valid) >= 3:
         out["site"] = extrapolate_pc_raw(valid, rSI, rSU)
         if rBI and rBU and rBI[0] is not None:
@@ -282,6 +290,11 @@ def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=N
                     out[key] = {"d_inf": d_inf, "d_ci": d_ci, "isotropic": bool(ok)}
                 except Exception:
                     pass
+        if raw_smax is not None:
+            try:
+                out["exponents"] = fit_exponents(valid, raw_smax)
+            except Exception:
+                pass
     return out
 
 
@@ -315,6 +328,12 @@ def save_result(result, member, kind, seed, T, name=None, out_dir=RESULTS_DIR):
             for i, (r, d) in enumerate(zip(result["raw_bond_pR"], result["raw_bond_pD"])):
                 iso[f"bpR_{i}"] = np.asarray(r, float); iso[f"bpD_{i}"] = np.asarray(d, float)
         np.savez(os.path.join(out_dir, stem + "_iso.npz"), **iso)
+    # Block-B d_f readout -> companion <stem>_exp.npz (per-L per-trial largest-cluster size s_max).
+    if result.get("raw_smax") is not None:
+        exp = {"L_values": np.asarray(result["L"], float)}
+        for i, s in enumerate(result["raw_smax"]):
+            exp[f"smax_{i}"] = np.asarray(s, float)
+        np.savez(os.path.join(out_dir, stem + "_exp.npz"), **exp)
     return path
 
 
@@ -328,7 +347,8 @@ def list_saved(out_dir=None):
         if not d or not os.path.isdir(d):
             continue
         files = [f for f in os.listdir(d)
-                 if f.endswith(".npz") and not f.endswith("_iso.npz") and "CHECKPOINT" not in f]
+                 if f.endswith(".npz") and not f.endswith("_iso.npz")
+                 and not f.endswith("_exp.npz") and "CHECKPOINT" not in f]
         for f in sorted(files, key=lambda f: os.path.getmtime(os.path.join(d, f)), reverse=True):
             if f not in seen:
                 seen.add(f); out.append(f)
@@ -353,8 +373,13 @@ def load_saved(fname, out_dir=None):
         if "bpR_0" in d:                       # bond arrays present only in newer runs
             raw_bond_pR = [d[f"bpR_{i}"] for i in range(nL)]
             raw_bond_pD = [d[f"bpD_{i}"] for i in range(nL)]
+    raw_smax = None
+    expp = os.path.join(base, fname[:-4] + "_exp.npz")
+    if os.path.exists(expp):                    # Block-B d_f companion (only exponent runs have it)
+        e = np.load(expp); nL = len(e["L_values"])
+        raw_smax = [e[f"smax_{i}"] for i in range(nL)]
     res = extrapolate_result(list(r.L_values), r.raw_SI, r.raw_SU, r.raw_BI, r.raw_BU, [],
-                             raw_pR, raw_pD, raw_bond_pR, raw_bond_pD)
+                             raw_pR, raw_pD, raw_bond_pR, raw_bond_pD, raw_smax)
     return res, {"member": r.tiling_type, "kind": "", "seed": r.seed, "T": r.trials,
                  "timestamp": r.timestamp}
 

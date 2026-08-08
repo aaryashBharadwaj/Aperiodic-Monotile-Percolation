@@ -124,3 +124,22 @@ def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
     print(f"[Direction bias] p_R - p_D (L->inf) = {d_inf:+.6f}   {int(confidence*100)}% CI "
           f"[{d_ci[0]:+.6f}, {d_ci[1]:+.6f}]  ->  {'no directional bias' if unbiased else 'DIRECTION-BIASED'}")
     return d_inf, d_ci, unbiased
+
+
+# ---- Block B: the fractal dimension d_f from the incipient-infinite-cluster size ----
+def fit_exponents(L_list, smax, B=200, seed=17):
+    """d_f from <s_max> ~ L^{d_f} (largest cluster at first-spanning), with a bootstrap-over-trials CI.
+    The other static exponents are NOT measured -- they follow from d_f by hyperscaling (tau = 1 + d/d_f,
+    gamma/nu = 2 d_f - d, beta/nu = d - d_f) and are returned as those consequences. (Direct cluster-
+    moment estimators of gamma/nu and tau are open-boundary biased, so we deliberately don't record
+    or fit them; d_f + nu are the two independent exponents that fix the class.)"""
+    rng = np.random.default_rng(seed)
+    L = np.asarray(L_list, float); logL = np.log(L)
+    smax = [np.asarray(s, float) for s in smax]
+    slope = lambda means: float(np.polyfit(logL, np.log(means), 1)[0])
+    d_f = slope([s.mean() for s in smax])
+    boot = [slope([s[rng.integers(0, len(s), len(s))].mean() for s in smax]) for _ in range(B)]
+    ci = (float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5)))
+    d = 2.0
+    return {"d_f": d_f, "d_f_ci": ci,
+            "hyperscaling": {"tau": 1 + d / d_f, "gamma_nu": 2 * d_f - d, "beta_nu": d - d_f}}
