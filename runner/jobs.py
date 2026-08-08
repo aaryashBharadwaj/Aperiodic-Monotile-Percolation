@@ -118,9 +118,11 @@ def clear_job(jid):
                 pass
 
 
-def launch_job(tiling, member, graph_type, kind, patch, a, b, Lmin, Lmax, gap, T, seed, name=None):
+def launch_job(tiling, member, graph_type, kind, patch, a, b, Lmin, Lmax, gap, T, seed, name=None,
+               exponents=False):
     """Spawn percolate.py detached and return its job id. Reuses an existing checkpoint (same
-    params) automatically. The process outlives this Streamlit server."""
+    params) automatically. The process outlives this Streamlit server. exponents=True adds the
+    Block-B d_f pass (--exponents)."""
     jd = _jobs_dir()
     jid = make_job_id(member, kind, patch, a, b, Lmin, Lmax, gap, T, seed)
     # Clear any stale stop flag from a previous run of this id.
@@ -135,6 +137,8 @@ def launch_job(tiling, member, graph_type, kind, patch, a, b, Lmin, Lmax, gap, T
             "--trials", str(int(T)), "--seed", str(int(seed)), "--jobs-dir", jd,
             "--out-dir", RESULTS_DIR,
             "--name", name or ""]
+    if exponents:
+        argv.append("--exponents")
     env = dict(os.environ, PYTHONIOENCODING="utf-8", MPLBACKEND="Agg")
     with open(job_paths(jid)["log"], "w") as logf:   # child inherits its own handle; close ours
         if os.name == "nt":

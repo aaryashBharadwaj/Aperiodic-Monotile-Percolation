@@ -6,7 +6,8 @@ Three tabs behind one tiling picker:
   * Visualise  — generate the chosen tiling at a size you control and (optionally) overlay the exact
                  percolation graph, i.e. proof the generator produces the real shape + lattice.
   * Percolate  — launch a run (any patch up to production), sweep L, finite-size-extrapolate the
-                 site & bond thresholds, report p_c, and check for directional bias. Runs auto-save.
+                 site & bond thresholds, report p_c, check for directional bias, and optionally
+                 measure the fractal dimension d_f. Runs auto-save.
   * Analyse saved — reload any run from results_output/ (saved here or by runner/percolate.py)
                  and show the identical analysis.
 
@@ -225,6 +226,15 @@ def show_results(res, label, key_prefix, meta=None):
         if res.get("isotropy_bond"): _bias_block(res["isotropy_bond"], "bond")
     else:
         st.caption("Direction-bias check was not recorded for this run.")
+
+    if res.get("exponents"):
+        e = res["exponents"]; lo, hi = e["d_f_ci"]; h = e["hyperscaling"]
+        st.markdown("**Fractal dimension d_f (universality class)**  \n"
+                    "Incipient spanning cluster: ⟨S_max⟩ ~ L^d_f.  "
+                    f"**d_f = {e['d_f']:.4f}**  (95% CI [{lo:.4f}, {hi:.4f}]; 2D percolation = 91/48 ≈ 1.8958)")
+        st.caption("d_f (measured) with ν (from the crossing width) fix the class; the other static "
+                   f"exponents follow by hyperscaling — τ = {h['tau']:.3f}, γ/ν = {h['gamma_nu']:.3f}, "
+                   f"β/ν = {h['beta_nu']:.4f} — and are not measured directly.")
 
     f1 = figs.fss_figure(res)
     st.pyplot(f1, width="content")
@@ -538,9 +548,14 @@ with tab_run:
     _s = jobs.read_job_status(active) if active else None
     _busy = bool(_s and _s.get("status") in ("launching", "building", "running", "finalising"))
 
+    want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
+                           help="Block-B pass: records the incipient-cluster size per trial -> the "
+                                "fractal dimension d_f (<s_max> ~ L^d_f), one of the two exponents that "
+                                "fix the universality class. Off by default to keep runs fast; the "
+                                "paper's universality runs turn it on.")
     if st.button("Run percolation", type="primary", disabled=(n_used < 3) or _busy):
         jid = jobs.launch_job(tiling, member, graph_type, kind, patch, round(a, 3), round(b, 3),
-                            L_min, L_max, gap, int(T), int(seed))
+                            L_min, L_max, gap, int(T), int(seed), exponents=want_exp)
         st.session_state["active_job"] = jid
         st.rerun()
     if not _busy:
@@ -556,6 +571,8 @@ with tab_run:
             _parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
         _parts += [f"--patch {patch}", f"--lmin {L_min:g}", f"--lmax {L_max:g}", f"--gap {gap:g}",
                    f"--trials {int(T)}", f"--seed {int(seed)}"]
+        if want_exp:
+            _parts.append("--exponents")
         st.code("python runner/percolate.py " + " ".join(_parts), language="bash")
         st.caption("Same computation as the button (identical kernels, seed and results). Run it "
                    "from the project folder. It checkpoints and resumes if interrupted, and saves "

@@ -1,9 +1,11 @@
 # Reproducing the paper's percolation results
 
 Every result comes from **one** consolidated runner, `percolate.py`. It builds the tiling, runs
-the Newman–Ziff sweep (the same numba/thread kernels the GUI uses), extrapolates `p_c`, tests
-isotropy, and saves an `.npz` to `results_output/`. It **checkpoints after every L and resumes** —
-re-run the same command after an interruption and it picks up where it stopped.
+the Newman–Ziff sweep (the same numba/thread kernels the GUI uses), extrapolates `p_c`, runs the
+direction-bias check (site & bond), and saves an `.npz` to `results_output/`. With `--exponents`
+it also runs the Block-B cluster pass, recording the fractal dimension `d_f`. It **checkpoints
+after every L and resumes** — re-run the same command after an interruption and it picks up where
+it stopped.
 
 The GUI's **Run** button launches exactly these commands in the background; the Percolate tab's
 "Run from a console instead" panel prints the command for whatever you've configured.
@@ -22,9 +24,11 @@ python runner/percolate.py --tiling <name> --graph <direct|dual> --patch <n> \
 - `--graph`: `direct` (vertex graph) or `dual` (tile-adjacency graph).
 - `--patch`: inflation level (Hat/Spectre), subdivisions (Penrose), or block cell-count (periodic/Square).
 - member and direct/dual are auto-derived; `--seed 123456789` is the paper seed throughout.
+- `--exponents`: also record the fractal dimension `d_f` (an extra cluster sweep, ~+20% time). The
+  paper's universality runs use it; leave it off for a quick threshold-only run.
 - Windows: prefix with `PYTHONIOENCODING=utf-8` if the console chokes on the arrows.
 
-Progress prints to the console; the `p_c` / isotropy summary prints at the end; the result `.npz`
+Progress prints to the console; the `p_c` / direction-bias summary prints at the end; the result `.npz`
 lands in `results_output/` (and shows up under the GUI's "Analyse saved" tab).
 
 ## The paper results
