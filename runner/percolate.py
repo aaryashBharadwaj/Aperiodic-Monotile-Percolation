@@ -56,6 +56,7 @@ def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # percolate is in runner/
     sys.path.insert(0, repo_root)                                             # so the packages import
     import interface.gui_backend as gb
+    import runner.jobs as jobs
 
     # Derive the pieces the GUI passes explicitly but a console user shouldn't have to.
     graph = _GRAPH.get(args.graph.strip().lower(), args.graph)
@@ -65,10 +66,10 @@ def main():
     member = args.member or gb.resolve_member(args.tiling, a, b)
     out_dir = args.out_dir or os.path.join(repo_root, "results_output")
     bt = args.bt if args.bt is not None else gb.default_bt(member)
-    jid = args.job_id or gb.make_job_id(member, kind, patch, a, b, args.lmin, args.lmax,
+    jid = args.job_id or jobs.make_job_id(member, kind, patch, a, b, args.lmin, args.lmax,
                                         args.gap, int(args.trials), int(args.seed))
 
-    p = gb.job_paths(jid)
+    p = jobs.job_paths(jid)
     ckpt, stop_flag = p["ckpt"], p["stop"]
     ckpt_tmp = ckpt[:-4] + ".tmp.npz"      # must end in .npz or np.savez appends it and rename fails
 
@@ -82,7 +83,7 @@ def main():
           f"({total} sizes) T={args.trials} seed={args.seed}  (job {jid})", flush=True)
 
     def status(state, i, last_line="", result_file=None, error=None):
-        gb.write_status(jid, {
+        jobs.write_status(jid, {
             "job_id": jid, "status": state, "i": i, "total": total, "n_valid": len(valid),
             "last_line": last_line, "member": member, "kind": kind, "patch": patch,
             "seed": args.seed, "trials": args.trials, "lmin": args.lmin, "lmax": args.lmax,
@@ -114,7 +115,7 @@ def main():
                  BI=np.array(rBI, float), BU=np.array(rBU, float), PR=np.array(rPR, float),
                  PD=np.array(rPD, float), BPR=np.array(rBPR, float), BPD=np.array(rBPD, float),
                  skipped=np.array(skipped, float), next_i=next_i)
-        gb._safe_replace(ckpt_tmp, ckpt)
+        jobs._safe_replace(ckpt_tmp, ckpt)
 
     try:
         if total < 1:

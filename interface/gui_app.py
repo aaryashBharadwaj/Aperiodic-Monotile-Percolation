@@ -25,6 +25,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 import streamlit.components.v1 as components
 import interface.gui_backend as gb
+import visualiser.figures as figs
+import interface.demo as demo
+import runner.jobs as jobs
+import interface.estimate as est
 from engine.percolation import l_sweep
 
 st.set_page_config(page_title="Aperiodic Percolation Portal", layout="wide")
@@ -50,12 +54,12 @@ st.markdown(
 
 @st.cache_data(show_spinner="Rendering…")
 def cached_visualise(tiling, size, a, b, graph_type, show_graph):
-    return gb.visualise(tiling, size, a, b, graph_type, show_graph)
+    return figs.visualise(tiling, size, a, b, graph_type, show_graph)
 
 
 @st.cache_data(show_spinner="Building demo…")
 def cached_demo(lattice):
-    return gb.build_demo(lattice=lattice, n=40)
+    return demo.build_demo(lattice=lattice, n=40)
 
 
 # Self-contained HTML/SVG+JS for the Toy demo. The slider lives INSIDE the component, so dragging it
@@ -222,11 +226,11 @@ def show_results(res, label, key_prefix, meta=None):
     else:
         st.caption("Direction-bias check was not recorded for this run.")
 
-    f1 = gb.fss_figure(res)
+    f1 = figs.fss_figure(res)
     st.pyplot(f1, width="content")
     st.download_button("Download extrapolation plot", _fig_bytes(f1), mime="image/png",
                        file_name=f"{key_prefix}_extrapolation.png", key=f"{key_prefix}_dl_fss")
-    f2 = gb.convergence_figure(res)
+    f2 = figs.convergence_figure(res)
     st.pyplot(f2, width="content")
     st.download_button("Download convergence plot", _fig_bytes(f2), mime="image/png",
                        file_name=f"{key_prefix}_convergence.png", key=f"{key_prefix}_dl_conv")
@@ -246,7 +250,7 @@ def render_job_monitor(s):
     if live:
         c1, c2 = st.columns([1, 5])
         if c1.button("Stop", key=f"stop_{jid}"):
-            gb.stop_job(jid)
+            jobs.stop_job(jid)
             st.rerun()
         c2.caption("Runs in the background — you can close the tab or let the machine sleep and "
                    "reopen later; it checkpoints after every L and resumes.")
@@ -322,8 +326,8 @@ with st.sidebar:
     if st.button("Recalibrate timer", help="Re-measure the per-trial cost on this machine; "
                                            "the run-time estimates then use it."):
         with st.spinner("Calibrating…"):
-            c = gb.calibrate()
-        per = gb._c_per_node(c, 100_000) * 1e9   # ns per node·trial at a ~100k-node frame
+            c = est.calibrate()
+        per = est._c_per_node(c, 100_000) * 1e9   # ns per node·trial at a ~100k-node frame
         st.success(f"Recalibrated — estimates now use this machine (~{per:.0f} ns/node·trial "
                    "at a 100k-node frame).")
 
@@ -457,7 +461,7 @@ with tab_run:
         patch = st.slider(plabel, plo, phi, key=patch_key)
         # Size + ETA come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing even the
         # r=6 patch is instant. The (heavy) build happens only when you hit Run.
-        ge = gb.geometry(member, kind, patch)
+        ge = est.geometry(member, kind, patch)
         usable_max = (ge[1] * 0.9) if ge else 200.0
         st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
                    "(bigger windows fall outside the tiling and are skipped).")
@@ -482,10 +486,10 @@ with tab_run:
     # runner sweep the identical sizes.
     Ls = l_sweep(L_min, L_max, gap)
 
-    plan = gb.plan_run(member, kind, patch, Ls, T) if Ls else None
+    plan = est.plan_run(member, kind, patch, Ls, T) if Ls else None
     n_used = plan["n_usable"] if plan else 0
     eta = plan["eta"] if plan else 0.0
-    accuracy = gb.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
+    accuracy = est.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
 
     with cnote:
         ref = gb.REFERENCE.get((member, kind))
@@ -525,17 +529,17 @@ with tab_run:
     # Auto-reattach: if a run is still going (this tab was closed/reopened, or the server restarted),
     # pick it up so the progress bar comes right back.
     if not st.session_state.get("active_job"):
-        _live = [j for j in gb.list_jobs()
+        _live = [j for j in jobs.list_jobs()
                  if j.get("status") in ("launching", "building", "running", "finalising")]
         if _live:
             st.session_state["active_job"] = _live[0]["job_id"]
 
     active = st.session_state.get("active_job")
-    _s = gb.read_job_status(active) if active else None
+    _s = jobs.read_job_status(active) if active else None
     _busy = bool(_s and _s.get("status") in ("launching", "building", "running", "finalising"))
 
     if st.button("Run percolation", type="primary", disabled=(n_used < 3) or _busy):
-        jid = gb.launch_job(tiling, member, graph_type, kind, patch, round(a, 3), round(b, 3),
+        jid = jobs.launch_job(tiling, member, graph_type, kind, patch, round(a, 3), round(b, 3),
                             L_min, L_max, gap, int(T), int(seed))
         st.session_state["active_job"] = jid
         st.rerun()
@@ -560,7 +564,7 @@ with tab_run:
 
     # Other jobs (finished, or running from another session) — reattach or clean up. Rendered BEFORE
     # the live monitor so it stays visible while the monitor is polling.
-    others = [j for j in gb.list_jobs() if j.get("job_id") != active]
+    others = [j for j in jobs.list_jobs() if j.get("job_id") != active]
     if others:
         with st.expander(f"Background jobs ({len(others)})"):
             for j in others:
@@ -571,7 +575,7 @@ with tab_run:
                     st.session_state["active_job"] = j["job_id"]
                     st.rerun()
                 if c2.button("Clear", key=f"clr_{j['job_id']}"):
-                    gb.clear_job(j["job_id"])
+                    jobs.clear_job(j["job_id"])
                     st.rerun()
 
     if active and _s:
