@@ -38,8 +38,8 @@ from builders.direct_graph_builder import (build_neighbor_graph_fast, analyze_sq
                                   largest_square_center, graph_from_polygons)
 from builders.dual_graph_builder import collect_leaf_polygons, build_dual_from_polygons, analyze_tile_square_frame
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
-                         percolationStatsBondI_par, percolationStatsBondU_par,
-                         extrapolate_pc_raw, isotropy_test)
+                         percolationStatsBondI_par, percolationStatsBondU_par)
+from engine.analysis import extrapolate_pc_raw, isotropy_test
 from visualiser.run_tiling_render import tiling_polygons, render_tiling, _threshold_class
 from generators.family_geometry import tile_ab, periodic_graph, periodic_polys
 from generators.periodic_tiling_generator import square_tiles, triangular_tris   # validated periodic geometry
