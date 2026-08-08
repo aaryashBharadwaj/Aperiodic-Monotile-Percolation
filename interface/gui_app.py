@@ -175,50 +175,49 @@ def demo_component(demo, mode, jump_k):
 _SCALING_HTML = r"""
 <style>
  .scw{font-family:sans-serif;color:#333;}
- .scrow{display:flex;gap:18px;align-items:flex-end;justify-content:center;}
+ .scgrids{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;justify-content:center;}
  .sccol{display:flex;flex-direction:column;align-items:center;}
  .scsvg{background:#fff;border:1px solid #eee;}
- .sclbl{font-size:13px;margin-top:6px;text-align:center;line-height:1.3;} .scok{color:#1a7f37;font-weight:600;}
- .scctl{display:flex;gap:12px;align-items:center;margin:14px 4px 6px;}
+ .sclbl{font-size:11px;margin-top:2px;text-align:center;color:#666;}
+ .scctl{display:flex;gap:12px;align-items:center;margin:12px 4px 4px;}
  .scb{padding:5px 12px;border:1px solid #ccc;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:13px;}
- .scsl{flex:1;} .scsum{font-size:14px;margin:6px 2px;min-height:3.4em;}
+ .scsl{flex:1;} .scsum{font-size:13.5px;margin:4px 2px 0;min-height:3.2em;line-height:1.45;}
+ .scplotwrap{display:flex;justify-content:center;margin-top:6px;}
 </style>
 <div class="scw">
- <div class="scrow">
-  <div class="sccol"><svg class="scsvg" id="sc_svg_0" width="170" height="170"></svg><div class="sclbl" id="sc_lbl_0"></div></div>
-  <div class="sccol"><svg class="scsvg" id="sc_svg_1" width="215" height="215"></svg><div class="sclbl" id="sc_lbl_1"></div></div>
-  <div class="sccol"><svg class="scsvg" id="sc_svg_2" width="260" height="260"></svg><div class="sclbl" id="sc_lbl_2"></div></div>
- </div>
+ <div class="scgrids" id="sc_grids"></div>
  <div class="scctl">
-  <button class="scb" id="sc_jump" title="Jump to the percolation point">Jump to percolation</button>
-  <input class="scsl" id="sc_sl" type="range" min="0" max="1000" value="0" title="Drag to open more of each grid">
+  <button class="scb" id="sc_jump" title="Jump to the percolation point p = 0.5927">Jump to percolation</button>
+  <input class="scsl" id="sc_sl" type="range" min="0" max="100" value="0" title="Drag to open more of every grid">
   <span id="sc_frac"></span>
  </div>
+ <div class="scplotwrap"><svg id="sc_plot" width="560" height="300" style="max-width:100%;height:auto;"></svg></div>
  <div class="scsum" id="sc_sum"></div>
 </div>
 <script>
 const G=__DATA__;
 (function(){
- const NS="http://www.w3.org/2000/svg", GOLD="#f4b400";
+ const NS="http://www.w3.org/2000/svg", GOLD="#f4b400", BLUE="#1f5fa8", GREY="#c2c2cc";
+ const sizes=G.sizes, pgrid=G.pgrid, P=pgrid.length, F=G.fillings, pc=G.pc;
+ const pcIdx=pgrid.reduce((best,p,i)=>Math.abs(p-pc)<Math.abs(pgrid[best]-pc)?i:best,0);
+ const el=id=>document.getElementById(id);
+ const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+
+ // ---- thumbnails: one grid per size (filling 0), drawn live from its open order ----
+ const holder=el("sc_grids");
  const grids=G.grids.map((g,gi)=>{
-  const svg=document.getElementById("sc_svg_"+gi);
+  const box=56, col=document.createElement("div"); col.className="sccol";
+  const svg=document.createElementNS(NS,"svg"); svg.setAttribute("width",box); svg.setAttribute("height",box); svg.setAttribute("class","scsvg");
   const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.04;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
-  svg.setAttribute("preserveAspectRatio","xMidYMid meet");
-  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.36*u;
-  const nEl=g.coords.map(c=>{const ci=document.createElementNS(NS,"circle");ci.setAttribute("cx",c[0]);ci.setAttribute("cy",fy(c[1]));ci.setAttribute("r",R);svg.appendChild(ci);return ci;});
-  return {g,nEl,R,setT:new Set(g.top),setB:new Set(g.bottom),setL:new Set(g.left),setR:new Set(g.right)};
+  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.40*u;
+  const nEl=g.coords.map(c=>{const ci=mk("circle",{cx:c[0],cy:fy(c[1]),r:R});svg.appendChild(ci);return ci;});
+  const lbl=document.createElement("div"); lbl.className="sclbl"; lbl.textContent="L="+g.n;
+  col.appendChild(svg); col.appendChild(lbl); holder.appendChild(col);
+  return {g,nEl,R};
  });
- // d_f from the three ensemble-mean largest-cluster sizes: slope of log(smax_mean) vs log(L).
- const dfFit=(()=>{
-  const x=grids.map(G3=>Math.log(G3.g.n)),y=grids.map(G3=>Math.log(G3.g.smax_mean));
-  const mx=x.reduce((a,b)=>a+b,0)/x.length,my=y.reduce((a,b)=>a+b,0)/y.length;
-  let sxy=0,sxx=0;for(let i=0;i<x.length;i++){sxy+=(x[i]-mx)*(y[i]-my);sxx+=(x[i]-mx)*(x[i]-mx);}
-  return sxx?sxy/sxx:NaN;
- })();
- // Draw grid gi with its first k sites open (of the representative filling); return the live largest %.
- function draw(gi,k){
-  const G3=grids[gi],g=G3.g,N=g.N,edges=g.edges,order=g.order;
+ function drawThumb(gi,p){
+  const G3=grids[gi],g=G3.g,N=g.N,edges=g.edges,order=g.order,k=Math.min(Math.round(p*N),N);
   const par=new Int32Array(N);for(let i=0;i<N;i++)par[i]=i;
   const open=new Uint8Array(N);
   function find(x){let r=x;while(par[r]!==r)r=par[r];while(par[x]!==r){const n=par[x];par[x]=r;x=n;}return r;}
@@ -226,55 +225,91 @@ const G=__DATA__;
   for(let e=0;e<edges.length;e++){const a=edges[e][0],b=edges[e][1];if(open[a]&&open[b]){const ra=find(a),rb=find(b);if(ra!==rb)par[ra]=rb;}}
   const sz=new Int32Array(N);let bigR=-1,bigN=0;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
-  let t=false,bt=false,l=false,r=false;
-  if(bigR>=0)for(let v=0;v<N;v++){if(open[v]&&find(v)===bigR){if(G3.setT.has(v))t=true;if(G3.setB.has(v))bt=true;if(G3.setL.has(v))l=true;if(G3.setR.has(v))r=true;}}
-  const span=(t&&bt)||(l&&r);
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
-   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",GOLD);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.22);}
+   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",GOLD);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.25);}
    else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
-   else{ci.setAttribute("fill","#e3e3e9");ci.removeAttribute("stroke");}}
-  const pct=N?100*bigN/N:0;
-  document.getElementById("sc_lbl_"+gi).innerHTML="L = "+g.n+"<br>largest: <b>"+pct.toFixed(0)+"%</b>"+(span?" <span class=scok>spans</span>":"");
-  return pct;
+   else{ci.setAttribute("fill","#e8e8ee");ci.removeAttribute("stroke");}}
  }
- // Manual mode: same occupation fraction across all grids (drag to watch them fill together).
- function slide(frac){
-  grids.forEach((G3,gi)=>draw(gi,Math.floor(frac*G3.g.N)));
-  document.getElementById("sc_frac").innerHTML="open fraction p = <b>"+frac.toFixed(3)+"</b>";
+
+ // ---- log-log plot: share (%) of largest cluster vs grid size L ----
+ const plot=el("sc_plot"), PW=560, PH=300, mL=46, mR=16, mT=30, mB=34;
+ const xlo=Math.log10(sizes[0]*0.88), xhi=Math.log10(sizes[sizes.length-1]*1.12);
+ const ylo=Math.log10(2), yhi=Math.log10(100);
+ const SX=L=>mL+(Math.log10(L)-xlo)/(xhi-xlo)*(PW-mL-mR);
+ const SY=s=>PH-mB-(Math.log10(Math.max(s,2))-ylo)/(yhi-ylo)*(PH-mT-mB);
+ // static axes
+ plot.appendChild(mk("rect",{x:mL,y:mT,width:PW-mL-mR,height:PH-mT-mB,fill:"#fff",stroke:"#eee"}));
+ [2,5,10,20,50,100].forEach(s=>{
+  plot.appendChild(mk("line",{x1:mL,y1:SY(s),x2:PW-mR,y2:SY(s),stroke:"#f0f0f2"}));
+  const tx=mk("text",{x:mL-6,y:SY(s)+3,"text-anchor":"end","font-size":10,fill:"#999"});tx.textContent=s+"%";plot.appendChild(tx);
+ });
+ sizes.forEach(L=>{
+  const tx=mk("text",{x:SX(L),y:PH-mB+13,"text-anchor":"middle","font-size":10,fill:"#999"});tx.textContent=L;plot.appendChild(tx);
+ });
+ plot.appendChild(mk("text",{x:(mL+PW-mR)/2,y:PH-4,"text-anchor":"middle","font-size":11,fill:"#666"})).textContent="grid size  L";
+ const yl=mk("text",{x:12,y:(mT+PH-mB)/2,"text-anchor":"middle","font-size":11,fill:"#666",transform:"rotate(-90 12 "+((mT+PH-mB)/2)+")"});yl.textContent="largest-cluster share  s_max / N";plot.appendChild(yl);
+ // reference line: slope d_f-2 = -0.104 (exact 2D), anchored at the ladder centre
+ const xc=(xlo+xhi)/2, refY0=Math.log10(32);
+ const refA=refY0+0.104*xc; // log10(share)=refA-0.104*log10(L)
+ const refShare=x=>Math.pow(10,refA-0.104*x);
+ plot.appendChild(mk("line",{x1:SX(sizes[0]),y1:SY(refShare(Math.log10(sizes[0]))),x2:SX(sizes[sizes.length-1]),y2:SY(refShare(Math.log10(sizes[sizes.length-1]))),stroke:"#bbb","stroke-dasharray":"5 4","stroke-width":1.3}));
+ const refLbl=mk("text",{x:SX(sizes[sizes.length-1]),y:SY(refShare(Math.log10(sizes[sizes.length-1])))-5,"text-anchor":"end","font-size":10,fill:"#999"});refLbl.textContent="2D fractal  d_f=1.90";plot.appendChild(refLbl);
+ // dynamic layer (dots + fit line + d_f readout)
+ const dyn=mk("g",{});plot.appendChild(dyn);
+
+ function linreg(xs,ys){
+  const n=xs.length,mx=xs.reduce((a,b)=>a+b,0)/n,my=ys.reduce((a,b)=>a+b,0)/n;
+  let sxy=0,sxx=0;for(let i=0;i<n;i++){sxy+=(xs[i]-mx)*(ys[i]-my);sxx+=(xs[i]-mx)*(xs[i]-mx);}
+  const b=sxx?sxy/sxx:0;return {b,a:my-b*mx};
+ }
+ function update(pidx){
+  while(dyn.firstChild)dyn.removeChild(dyn.firstChild);
+  const p=pgrid[pidx];
+  grids.forEach((_,gi)=>drawThumb(gi,p));
+  const mLx=[],mLy=[],means=[];
+  G.grids.forEach((g,gi)=>{
+   let sum=0;
+   for(let f=0;f<F;f++){
+    const s=g.shares[f][pidx]; sum+=s;
+    dyn.appendChild(mk("circle",{cx:SX(g.n),cy:SY(s),r:2.4,fill:f===0?"none":GREY,
+      stroke:f===0?GOLD:"none","stroke-width":f===0?1.4:0,"fill-opacity":0.55}));
+   }
+   const m=sum/F; means.push(m);
+   dyn.appendChild(mk("circle",{cx:SX(g.n),cy:SY(m),r:4.2,fill:BLUE,stroke:"#fff","stroke-width":1}));
+   if(m>0){mLx.push(Math.log10(g.n));mLy.push(Math.log10(m));}
+  });
+  // fit line through the per-size means; slope of log(share) vs log(L) is d_f-2
+  const fit=linreg(mLx,mLy), df=2+fit.b;
+  const L0=sizes[0],L1=sizes[sizes.length-1];
+  const y0=Math.pow(10,fit.a+fit.b*Math.log10(L0)), y1=Math.pow(10,fit.a+fit.b*Math.log10(L1));
+  dyn.appendChild(mk("line",{x1:SX(L0),y1:SY(y0),x2:SX(L1),y2:SY(y1),stroke:BLUE,"stroke-width":2}));
+  dyn.appendChild(mk("text",{x:mL+8,y:mT-10,"font-size":13,fill:BLUE,"font-weight":700})).textContent="d_f = "+df.toFixed(2);
+  el("sc_frac").innerHTML="p = <b>"+p.toFixed(3)+"</b>";
+  // caption by regime
   let msg;
-  if(frac<0.45)msg="Below the percolation point — each grid's largest cluster is small and local. Drag right, or hit <b>Jump to percolation</b>.";
-  else if(frac>0.68)msg="Above the percolation point — the grids are saturating and the largest cluster fills most of each.";
-  else msg="Around the percolation point the largest cluster suddenly becomes grid-spanning. Hit <b>Jump to percolation</b> to snap each grid to its own first-spanning point.";
-  document.getElementById("sc_sum").innerHTML=msg;
+  if(p<pc-0.03){
+   msg="<b>Below</b> the percolation point: the largest cluster is a finite blob, so its share <b>falls steeply</b> as the grid grows (the points slope down far faster than the dashed line). Not yet critical.";
+  }else if(p<=pc+0.03){
+   msg="<b>At</b> the percolation point the ten means sit on a <b>straight line</b> parallel to the 2D reference — the share is nearly the same across a 5&times; range of sizes (scale invariance). Its slope gives <b>d_f = "+df.toFixed(2)+"</b> (2D exact 91/48 = 1.90). Faint dots are the "+F+" individual fillings behind each mean — the run-to-run spread is real and never shrinks, which is exactly why one grid can't settle this and the average can.";
+  }else{
+   msg="<b>Above</b> the percolation point: the largest cluster is extensive, so its share <b>flattens</b> toward a constant (slope &rarr; 0, d_f &rarr; 2) — it fills a fixed fraction of every grid.";
+  }
+  el("sc_sum").innerHTML=msg;
  }
- // Percolation mode: snap EACH grid to its OWN first-spanning point; report the ENSEMBLE-mean share.
- function jump(){
-  grids.forEach((G3,gi)=>draw(gi,G3.g.onset));
-  const shares=grids.map(G3=>G3.g.share_mean);
-  document.getElementById("sc_frac").innerHTML="<b>each grid at its own first-spanning point</b>";
-  document.getElementById("sc_sum").innerHTML=
-   "Averaged over "+G.ens+" fillings, each driven to its <b>own</b> first-spanning point, the largest cluster fills "
-   +"<b>"+shares.map(s=>s.toFixed(0)+"%").join(" &middot; ")+"</b> of the grid — the shares <b>line up</b> across very "
-   +"different sizes (scale invariance), and <b>gently shrink</b> as the grid grows. A solid 2D region would stay ~100%, "
-   +"a 1D line would vanish; the incipient cluster sits between — a <b>fractal</b>. Those three sizes alone already give "
-   +"⟨S<sub>max</sub>⟩ ~ L<sup>d_f</sup> with <b>d_f ≈ "+dfFit.toFixed(2)+"</b> (2D exact 91/48 = 1.90).";
- }
- const sl=document.getElementById("sc_sl");
- sl.addEventListener("input",()=>slide(+sl.value/1000));
- document.getElementById("sc_jump").addEventListener("click",jump);
- slide(0);
+ const sl=el("sc_sl");
+ sl.max=P-1;
+ sl.addEventListener("input",()=>update(+sl.value));
+ el("sc_jump").addEventListener("click",()=>{sl.value=pcIdx;update(pcIdx);});
+ sl.value=0; update(0);
 })();
 </script>
 """
 
 
-def scaling_component(grids):
-    payload = {"ens": 24, "grids": [
-        {"n": g["n"], "N": g["N"], "coords": g["coords"], "edges": g["edges"], "order": g["order"],
-         "bbox": g["bbox"], "top": g["top"], "bottom": g["bottom"], "left": g["left"], "right": g["right"],
-         "onset": g["onset"], "smax_mean": g["smax_mean"], "share_mean": g["share_mean"]}
-        for g in grids]}
-    components.html(_SCALING_HTML.replace("__DATA__", json.dumps(payload)), height=400)
+def scaling_component(demo):
+    """Render the interactive scaling toy. `demo` is build_scaling_demo()'s dict (sizes, pgrid, pc,
+    fillings, grids); the whole thing is JSON-embedded and driven client-side."""
+    components.html(_SCALING_HTML.replace("__DATA__", json.dumps(demo)), height=520)
 
 
 def _fig_bytes(fig):
@@ -504,13 +539,16 @@ with tab_toy:
                    f"{k_inter / kmax:.2f}, estimate ≈ {est:.2f}"
                    + ("  (true: 0.5 bond, 0.5927 site)" if lattice == "square" else ""))
 
-    # --- separate scaling toy: the largest cluster above is ONE grid; run a few sizes and the two
-    #     universal exponents fall out of how it scales. ---
+    # --- separate scaling toy: the largest cluster above is ONE grid; run a ladder of sizes and the
+    #     fractal dimension falls out of how the largest-cluster share scales. ---
     st.markdown("---")
     st.markdown("**From one blob to the scaling law.** The largest cluster above was a *single* grid. "
-                "Here are three square grids of increasing size — drag the slider (or hit **Jump to "
-                "percolation**) to drive them all to the percolation point and watch the largest cluster "
-                "(gold) in each. The point isn't any one grid; it's how the numbers below them behave.")
+                "Here are **ten** square grids of increasing size. Drag the slider (or hit **Jump to "
+                "percolation**) and watch each grid drop to a point on the plot — the share of the grid "
+                "its largest cluster fills. Below the threshold those points slope down steeply; **at** "
+                "the percolation point they line up on a straight line whose slope is the fractal "
+                "dimension d_f. The faint dots behind each mean are ten independent fillings, so you can "
+                "see the run-to-run spread the average is built from — nothing is hidden.")
     scaling_component(cached_scaling())
 
 # ============================================================ VISUALISE engine
