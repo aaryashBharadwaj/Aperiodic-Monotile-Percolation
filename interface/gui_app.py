@@ -395,6 +395,16 @@ def show_results(res, label, key_prefix, meta=None):
             st.pyplot(fdf, width="content")
             st.download_button("Download d_f plot", _fig_bytes(fdf), mime="image/png",
                                file_name=f"{key_prefix}_df.png", key=f"{key_prefix}_dl_df")
+        fdc = figs.df_convergence_figure(res)
+        if fdc is not None:
+            st.caption("Convergence check: refit the d_f slope dropping the smallest sizes. With no "
+                       "corrections-to-scaling imposed, the effective exponent drifts to 91/48 on its "
+                       "own as finite-size (small-L) points fall away. Solid points are kept on a "
+                       "value-blind error budget (95% CI ≤ 0.02); the volatile tail (few sizes left) "
+                       "is excluded on the error, not on the value.")
+            st.pyplot(fdc, width="content")
+            st.download_button("Download d_f convergence plot", _fig_bytes(fdc), mime="image/png",
+                               file_name=f"{key_prefix}_df_convergence.png", key=f"{key_prefix}_dl_dfc")
 
     f1 = figs.fss_figure(res)
     st.pyplot(f1, width="content")

@@ -210,3 +210,58 @@ def df_figure(result):
     return fig
 
 
+def df_convergence_figure(result, hmax=0.02):
+    """Effective d_f vs L_min -- the assumption-free convergence test. Refit the slope of
+    <S_max> ~ L^{d_f} over sizes L >= L_min for a sweep of cutoffs, WITHOUT imposing any corrections-to-
+    scaling form. If the data belong to the 2D percolation class, the raw effective exponent drifts on
+    its own toward 91/48 as the small-L points (which carry the finite-size corrections) are dropped;
+    a fixed reference at 91/48 makes that visible. The cutoff is VALUE-BLIND: a point stays solid only
+    while its 95% bootstrap CI half-width is under `hmax` -- fewer sizes remain as L_min rises, so the
+    error grows and the volatile tail is excluded on the error budget, not on where the value sits.
+    The least-biased usable point (largest L_min still under the ceiling) is annotated as the estimate.
+    Returns a Figure, or None if the run has no s_max data / too few sizes."""
+    smax = result.get("raw_smax")
+    if smax is None or len(smax) < 6:
+        return None
+    from engine.analysis import fit_exponents
+    L = np.asarray(result["L"], float)
+    smax = [np.asarray(s, float) for s in smax]
+    o = np.argsort(L); L = L[o]; smax = [smax[i] for i in o]
+    Lmins = [float(m) for m in L if (L >= m).sum() >= 5]
+    xs, ys, half = [], [], []
+    for m in Lmins:
+        keep = L >= m
+        e = fit_exponents(L[keep], [s for s, k in zip(smax, keep) if k], B=300)
+        xs.append(m); ys.append(e["d_f"]); half.append((e["d_f_ci"][1] - e["d_f_ci"][0]) / 2.0)
+    xs, ys, half = np.array(xs), np.array(ys), np.array(half)
+    usable = half <= hmax
+    kmax = int(np.where(usable)[0].max()) if usable.any() else -1
+    EX = 91.0 / 48.0
+    C = "#1f5fa8"
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    ax.axhline(EX, ls="--", color="#222", lw=1.5, zorder=5, label=f"91/48 = {EX:.4f}  (2D percolation)")
+    ax.plot(xs, ys, "-", color=C, lw=1, alpha=0.3)                          # full curve, faint
+    if kmax >= 0:
+        ax.fill_between(xs[:kmax + 1], ys[:kmax + 1] - half[:kmax + 1], ys[:kmax + 1] + half[:kmax + 1],
+                        color=C, alpha=0.15)
+        ax.plot(xs[:kmax + 1], ys[:kmax + 1], "-o", color=C, ms=4, lw=1.6,
+                label=f"usable  (95% CI half-width ≤ {hmax:g})")
+        ax.plot(xs[kmax + 1:], ys[kmax + 1:], "o", color=C, ms=3, mfc="white", alpha=0.5,
+                label="excluded  (too few sizes → CI too wide)")
+        ax.axvline(xs[kmax], color=C, ls=":", lw=1.1, alpha=0.7)
+        ax.text(0.03, 0.05, f"estimate:  $d_f$ = {ys[kmax]:.3f} ± {half[kmax]:.3f}\n"
+                            f"(largest usable $L_{{\\min}}$ = {xs[kmax]:g})",
+                transform=ax.transAxes, va="bottom", fontsize=9,
+                bbox=dict(boxstyle="round", fc="white", ec="#ccc", alpha=0.9))
+    else:
+        ax.plot(xs, ys, "-o", color=C, ms=4)
+    ax.set_ylim(min(1.70, float(ys.min()) - 0.02), 1.96)
+    ax.set_xlabel(r"$L_{\min}$   (fit uses sizes $L \geq L_{\min}$ up to $L_{\max}$)")
+    ax.set_ylabel(r"effective $d_f$  (slope of $\ln\langle S_{\max}\rangle$ vs $\ln L$)")
+    ax.set_title(r"$d_f$ convergence — no corrections-to-scaling imposed")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="lower right", fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
