@@ -328,7 +328,8 @@ _NU_HTML = r"""
  .nucolh{font-size:11px;color:#888;margin-bottom:4px;text-align:center;}
  .nuleft,.nuright{display:flex;flex-direction:column;align-items:center;}
  .nucol{display:flex;flex-direction:column;align-items:center;}
- .nulbl{font-size:11px;margin-top:2px;text-align:center;line-height:1.25;font-weight:600;}
+ .nulbltop{font-size:11px;font-weight:700;margin-bottom:2px;}
+ .nulblbot{font-size:10px;margin-top:2px;min-height:1.1em;text-align:center;line-height:1.2;}
  .nusvg{background:#fff;border:1px solid #eee;}
  .nuctl{display:flex;gap:10px;align-items:center;margin:8px 4px 4px;flex-wrap:wrap;}
  .nub{padding:5px 11px;border:1px solid #ccc;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:13px;}
@@ -371,14 +372,15 @@ const G=__DATA__;
  const holder=el("nu_grids");
  const LG=grids.map((g,gi)=>{
   const box=60, cw=document.createElement("div"); cw.className="nucol";
+  const top=document.createElement("div"); top.className="nulbltop"; top.style.color=col(gi); top.textContent="L = "+g.n;
   const svg=document.createElementNS(NS,"svg"); svg.setAttribute("width",box);svg.setAttribute("height",box);svg.setAttribute("class","nusvg");
   const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.03;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
   const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.42*u;
   const nEl=g.coords.map(c=>{const ci=mk("circle",{cx:c[0],cy:fy(c[1]),r:R});svg.appendChild(ci);return ci;});
-  const lbl=document.createElement("div"); lbl.className="nulbl";
-  cw.appendChild(svg);cw.appendChild(lbl);holder.appendChild(cw);
-  return {g,gi,nEl,R,lbl,order:g.order,crossP:g.crossP,frozen:false,dropped:false};
+  const bot=document.createElement("div"); bot.className="nulblbot";
+  cw.appendChild(top);cw.appendChild(svg);cw.appendChild(bot);holder.appendChild(cw);
+  return {g,gi,nEl,R,bot,order:g.order,crossP:g.crossP};
  });
  function drawGrid(G3,k,frozen){
   const g=G3.g,N=g.N,edges=g.edges,order=G3.order;
@@ -388,17 +390,16 @@ const G=__DATA__;
   for(let e=0;e<edges.length;e++){const a=edges[e][0],b=edges[e][1];if(open[a]&&open[b]){const ra=find(a),rb=find(b);if(ra!==rb)par[ra]=rb;}}
   const sz=new Int32Array(N);let bigR=-1,bigN=0;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
-  const cc=frozen?GREEN:GOLD;
+  const cc=frozen?col(G3.gi):GOLD;                          // spanning cluster wears this grid's dot colour
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
    if(open[v]&&find(v)===bigR){ci.setAttribute("fill",cc);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.2);}
    else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
    else{ci.setAttribute("fill","#e8e8ee");ci.removeAttribute("stroke");}}
-  G3.lbl.innerHTML="<b style='color:"+col(G3.gi)+"'>L="+g.n+"</b> "
-   +(frozen?"<b style='color:#2e9e5b'>@ "+G3.crossP.toFixed(2)+"</b>":"<span style='color:#bbb'>…</span>");
+  G3.bot.innerHTML=frozen?"<b style='color:"+col(G3.gi)+"'>p_c ≈ "+G3.crossP.toFixed(2)+"</b>":"<span style='color:#ccc'>…</span>";
  }
 
  // ---- (2) the plot the sim builds: each grid's percolation point p* vs L, climbing to p_c ----
- const dropped=[]; let showCurve=false;
+ let curP=0.45, showCurve=false;                            // dots shown = grids currently spanning
  const plt=el("nu_plot"),pW=340,pH=260,pmL=44,pmR=14,pmT=12,pmB=34;
  const Lmin=sizes[0],Lmax=sizes[S-1], xlo=Math.log10(Lmin*0.9),xhi=Math.log10(Lmax*1.12);
  const PX=L=>pmL+(Math.log10(L)-xlo)/(xhi-xlo)*(pW-pmL-pmR);
@@ -412,34 +413,34 @@ const G=__DATA__;
   sizes.forEach((L,gi)=>{const t=mk("text",{x:PX(L),y:pH-pmB+12,"text-anchor":"middle","font-size":9,fill:col(gi),"font-weight":700});t.textContent=L;pdyn.appendChild(t);});
   pdyn.appendChild(mk("line",{x1:pmL,y1:PY(pc),x2:pW-pmR,y2:PY(pc),stroke:"#c0392b","stroke-dasharray":"4 3"}));
   pdyn.appendChild(mk("text",{x:pW-pmR-2,y:PY(pc)-4,"text-anchor":"end","font-size":10,fill:"#c0392b"})).textContent="true p_c = 0.593";
-  if(showCurve && dropped.length>=3){                       // fit a in  p_c - p* = a·L^(-1/nu), nu=4/3
-   let sxy=0,sxx=0;dropped.forEach(d=>{const x=Math.pow(d.L,-0.75),y=pc-d.p;sxy+=x*y;sxx+=x*x;});
+  const shown=LG.filter(G3=>curP>=G3.crossP);               // grids currently percolating
+  if(showCurve && shown.length===LG.length){                // fit a in p_c - p* = a·L^(-1/nu), nu=4/3
+   let sxy=0,sxx=0;shown.forEach(G3=>{const x=Math.pow(G3.g.n,-0.75),y=pc-G3.crossP;sxy+=x*y;sxx+=x*x;});
    const a=sxx?sxy/sxx:0;let dd="";
    for(let s=0;s<=48;s++){const L=Math.pow(10,xlo+(xhi-xlo)*s/48),y=pc-a*Math.pow(L,-0.75);dd+=(s?"L":"M")+PX(L).toFixed(1)+" "+PY(y).toFixed(1)+" ";}
    pdyn.appendChild(mk("path",{d:dd,fill:"none",stroke:"#2e6db4","stroke-width":2}));
    pdyn.appendChild(mk("text",{x:PX(Lmax),y:PY(pc-a*Math.pow(Lmax,-0.75))+14,"text-anchor":"end","font-size":10,fill:"#2e6db4","font-weight":700})).textContent="p_c − a·L^(−1/ν), ν=4/3";
   }
-  dropped.forEach(d=>pdyn.appendChild(mk("circle",{cx:PX(d.L),cy:PY(d.p),r:4,fill:col(d.gi),stroke:"#fff","stroke-width":1})));
+  shown.forEach(G3=>pdyn.appendChild(mk("circle",{cx:PX(G3.g.n),cy:PY(G3.crossP),r:4,fill:col(G3.gi),stroke:"#fff","stroke-width":1})));
   pdyn.appendChild(mk("text",{x:(pmL+pW-pmR)/2,y:pH-3,"text-anchor":"middle","font-size":10,fill:"#666"})).textContent="grid size  L  (log)";
   const yl2=mk("text",{x:12,y:(pmT+pH-pmB)/2,"text-anchor":"middle","font-size":10,fill:"#666",transform:"rotate(-90 12 "+((pmT+pH-pmB)/2)+")"});yl2.textContent="percolation point  p*";pdyn.appendChild(yl2);
  }
 
  // ---- occupation slider: freeze each grid at its crossing point and drop its dot ----
- function reset(){dropped.length=0;showCurve=false;LG.forEach(G3=>{G3.frozen=false;G3.dropped=false;});
+ function reset(){curP=0.45;showCurve=false;
   el("nu_psl").value=45;el("nu_p").textContent="0.450";
   LG.forEach(G3=>drawGrid(G3,Math.round(0.45*G3.g.N),false));drawPlot();
-  el("nu_sum").innerHTML="Slide the occupation up — a dot lands as each grid spans; then draw the curve.";}
- function occ(p){el("nu_p").textContent=p.toFixed(3);
-  LG.forEach(G3=>{
-   // bidirectional: above its crossing a grid holds its spanning (green) config; below it re-fills
-   // (gold), so a confused reader can slide back and re-watch. The dropped dot stays either way.
-   if(p>=G3.crossP){drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);if(!G3.dropped){G3.dropped=true;dropped.push({gi:G3.gi,L:G3.g.n,p:G3.crossP});}}
-   else drawGrid(G3,Math.round(p*G3.g.N),false);});
+  el("nu_sum").innerHTML="Slide the occupation up — a dot appears as each grid spans (and vanishes if you slide back); then draw the curve.";}
+ function occ(p){curP=p;el("nu_p").textContent=p.toFixed(3);
+  // fully bidirectional: a grid holds its spanning config above its crossing and re-fills below it;
+  // its dot on the chart appears/disappears in step, so sliding back rewinds everything.
+  LG.forEach(G3=>{if(p>=G3.crossP)drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);
+                  else drawGrid(G3,Math.round(p*G3.g.N),false);});
   drawPlot();}
  el("nu_psl").addEventListener("input",()=>occ(+el("nu_psl").value/100));
  el("nu_replay").addEventListener("click",reset);
  el("nu_curve").addEventListener("click",()=>{
-  if(dropped.length<sizes.length){el("nu_sum").innerHTML="Slide all the way up first, so every grid has dropped its dot.";return;}
+  if(LG.filter(G3=>curP>=G3.crossP).length<sizes.length){el("nu_sum").innerHTML="Slide all the way up first, so every grid has percolated.";return;}
   showCurve=true;drawPlot();
   el("nu_sum").innerHTML="The <b>ν = 4/3</b> curve threads the dots and flattens onto p_c — each grid's shortfall p_c − p* scales as L<sup>−1/ν</sup>. <span style='color:#888'>On grids this small the fit is approximate (their true slope is a hair off 4/3); it tightens as the grids grow.</span>";});
  reset();
