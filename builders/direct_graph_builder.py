@@ -115,10 +115,19 @@ def graph_from_polygons(polys, tol=1e-5):
 # above (the same routine the periodic family blocks reach via graph_from_polygons).
 # tol is a choice for which nodes are close enough to be the same node.
 def build_neighbor_graph_fast(patch, level=0, tol=1e-5):
-    # Pre-allocate raw-vertex array (grows exponentially with level). Cap at 20M
-    # Recurse until leaf tiles
-    estimated_nodes = 20000000 if level is None else min(1000 * (4 ** level), 20000000)
-    raw = np.empty((estimated_nodes, 2), dtype=np.float64)
+    # Exact-size pre-allocation: count the leaf-tile vertices in one light pass (tree walk only, no
+    # transforms), then allocate exactly that and fill. This replaces a fixed 20M cap that SILENTLY
+    # dropped vertices past the limit and then crashed on the raw/poly_sizes mismatch -- large aperiodic
+    # patches (spectre level 7 has ~30M raw vertices) now build correctly, and small patches no longer
+    # over-allocate a 320MB buffer.
+    def _count(patch, level):
+        ch = getattr(patch, "children", None)
+        if ch and (level is None or level > 0):
+            nxt = None if level is None else level - 1
+            return sum(_count(g['geom'], nxt) for g in ch)
+        return len(patch.shape)
+
+    raw = np.empty((_count(patch, level), 2), dtype=np.float64)
     poly_sizes = []               # vertices per leaf polygon, in collection order
     # cnt is the cursor to write into raw
     # it is a list for python-specific reason but functions as a counter
@@ -139,8 +148,7 @@ def build_neighbor_graph_fast(patch, level=0, tol=1e-5):
             shp = patch.shape
             for p in shp:
                 q = transPt(S, p)
-                if cnt[0] < len(raw):
-                    raw[cnt[0], 0] = q['x']; raw[cnt[0], 1] = q['y']; cnt[0] += 1
+                raw[cnt[0], 0] = q['x']; raw[cnt[0], 1] = q['y']; cnt[0] += 1
             poly_sizes.append(len(shp))
 
     _collect(patch, [1, 0, 0, 0, 1, 0], level)
