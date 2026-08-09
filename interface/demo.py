@@ -213,19 +213,16 @@ def _span_onset_k(N, neigh, top, bottom, left, right, order):
     return N
 
 
-def build_nu_demo(sizes=(10, 14, 20, 28, 38, 52), fillings=120, seed=2,
-                  p_lo=0.45, p_hi=0.75, p_steps=61):
-    """Data for the interactive CORRELATION-LENGTH (nu) toy: a ladder of SQUARE grids. For each size we
-    run `fillings` fillings and record the occupation p = k/N at which each first spans. The spread of
-    those crossing points is the finite-size transition width: small grids percolate over a FUZZY range
-    of p, large grids SNAP. The toy (1) DRAWS a few `live_sizes` grids percolating -- drag the occupation
-    up and watch each one's largest cluster grow until it spans, reshuffle to see the crossing point
-    jitter (a lot on small grids, barely on large); (2) shows R(p,L) = fraction of fillings spanning by
-    p, the sigmoid those crossings build (steeper with L); (3) collapses the curves by rescaling with
-    L^{1/nu}. Across the ladder the width sigma_L ~ L^{-1/nu} (2D: nu = 4/3). Returns a JSON-friendly
-    dict: `grids` (R + mean + width per size) and `live` (a few grids with geometry + open orders)."""
+def build_nu_demo(sizes=(8, 10, 12, 15, 18, 21, 25, 29, 33, 38), fillings=200, seed=2):
+    """Data for the interactive CORRELATION-LENGTH (nu) toy: ten SQUARE grids of increasing size, each
+    DRAWN so the reader can drag the occupation up and watch it percolate. Every finite grid percolates a
+    little below the true threshold, and the shortfall shrinks with size: the finite-size pseudo-critical
+    point obeys p*(L) = p_c - a*L^{-1/nu}. So as each grid spans it drops a dot at (L, p*), and the ten
+    dots climb toward p_c along that curve -- fit it with nu = 4/3 and it threads them (exactly in the
+    large-L limit; small grids sit a hair off). To keep the dots on a clean curve (a single filling is
+    too noisy) each grid ships its MEDIAN filling over `fillings` runs and that filling's crossing point.
+    Returns a JSON-friendly dict: `grids` (geometry + median open order + its crossing p) and `pc`."""
     rng = np.random.default_rng(seed)
-    pgrid = [round(p_lo + (p_hi - p_lo) * i / (p_steps - 1), 4) for i in range(p_steps)]
     grids = []
     for n in sizes:
         coords, edges, N, top, bottom, left, right, bbox = _square_demo(n)
@@ -233,18 +230,10 @@ def build_nu_demo(sizes=(10, 14, 20, 28, 38, 52), fillings=120, seed=2,
         for a, b in edges:
             neigh[a].append(b); neigh[b].append(a)
         top, bottom, left, right = list(top), list(bottom), list(left), list(right)
-        crossings = sorted(_span_onset_k(N, neigh, top, bottom, left, right,
-                                         [int(x) for x in rng.permutation(N)]) / N
-                           for _ in range(fillings))
-        R = [round(sum(1 for c in crossings if c <= p) / fillings, 4) for p in pgrid]
-        mean = float(np.mean(crossings)); std = float(np.std(crossings, ddof=1))
-        grids.append({"n": n, "N": N, "R": R, "mean": round(mean, 4), "std": round(std, 5)})
-    # the SAME sizes drawn live (geometry only -- the client generates random fillings, so the reader
-    # can run it unlimited times and the crossing points they drop build the plot from the simulation).
-    live = []
-    for n in sizes:
-        coords, edges, N, top, bottom, left, right, bbox = _square_demo(n)
-        live.append({"n": n, "N": N, "coords": coords, "edges": edges, "bbox": bbox,
-                     "top": list(top), "bottom": list(bottom), "left": list(left), "right": list(right)})
-    return {"sizes": list(sizes), "pgrid": pgrid, "pc": 0.5927, "fillings": fillings,
-            "grids": grids, "live": live}
+        orders = [[int(x) for x in rng.permutation(N)] for _ in range(fillings)]
+        ks = [_span_onset_k(N, neigh, top, bottom, left, right, o) for o in orders]
+        rep = sorted(range(fillings), key=lambda i: ks[i])[fillings // 2]   # median filling
+        grids.append({"n": n, "N": N, "coords": coords, "edges": edges, "bbox": bbox,
+                      "top": top, "bottom": bottom, "left": left, "right": right,
+                      "order": orders[rep], "crossP": round(ks[rep] / N, 4)})
+    return {"sizes": list(sizes), "pc": 0.5927, "grids": grids}
