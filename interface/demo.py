@@ -180,3 +180,61 @@ def build_scaling_demo(sizes=(8, 10, 12, 15, 18, 21, 25, 29, 33, 38), fillings=1
                       "top": list(top), "bottom": list(bottom), "left": list(left), "right": list(right),
                       "bbox": bbox, "order": thumb_order, "shares": shares})
     return {"sizes": list(sizes), "pgrid": pgrid, "pc": 0.5927, "fillings": fillings, "grids": grids}
+
+
+def _span_onset_k(N, neigh, top, bottom, left, right, order):
+    """Number of open sites at which the grid FIRST spans (top<->bottom or left<->right), for one random
+    filling. Incremental union-find with a per-cluster boundary bitmask; returns the step (so k/N is the
+    occupation p at which this realization percolates). This crossing point varies run to run, and the
+    spread of it over many fillings is the finite-size transition width -- which shrinks as L^{-1/nu}."""
+    T, B, L, R = 1, 2, 4, 8
+    fm = [0] * N
+    for v in top:    fm[v] |= T
+    for v in bottom: fm[v] |= B
+    for v in left:   fm[v] |= L
+    for v in right:  fm[v] |= R
+    parent = list(range(N)); size = [1] * N; isopen = bytearray(N)
+    def find(x):
+        r = x
+        while parent[r] != r: r = parent[r]
+        while parent[x] != r: parent[x], x = r, parent[x]
+        return r
+    for step, v in enumerate(order, 1):
+        isopen[v] = 1; rv = find(v)
+        for nb in neigh[v]:
+            if isopen[nb]:
+                ra, rb = rv, find(nb)
+                if ra != rb:
+                    if size[ra] < size[rb]: ra, rb = rb, ra
+                    parent[rb] = ra; size[ra] += size[rb]; fm[ra] |= fm[rb]; rv = ra
+        m = fm[rv]
+        if (m & (T | B)) == (T | B) or (m & (L | R)) == (L | R):
+            return step
+    return N
+
+
+def build_nu_demo(sizes=(12, 18, 28, 42, 64), fillings=120, seed=2,
+                  p_lo=0.45, p_hi=0.75, p_steps=61):
+    """Data for the interactive CORRELATION-LENGTH (nu) toy: a ladder of SQUARE grids. For each size we
+    run `fillings` fillings and record the occupation p = k/N at which each first spans. The spread of
+    those crossing points is the finite-size transition width: small grids percolate over a FUZZY range
+    of p, large grids SNAP. The toy plots the spanning-probability curve R(p,L) = fraction of fillings
+    spanning by p (a sigmoid that steepens with L) and reads off the width sigma_L; across the ladder
+    sigma_L ~ L^{-1/nu}, so the slope of log(width) vs log(L) gives the correlation-length exponent nu
+    (2D percolation: 4/3). Returns a JSON-friendly dict (sizes, pgrid, per-size R + mean + width)."""
+    rng = np.random.default_rng(seed)
+    pgrid = [round(p_lo + (p_hi - p_lo) * i / (p_steps - 1), 4) for i in range(p_steps)]
+    grids = []
+    for n in sizes:
+        coords, edges, N, top, bottom, left, right, bbox = _square_demo(n)
+        neigh = [[] for _ in range(N)]
+        for a, b in edges:
+            neigh[a].append(b); neigh[b].append(a)
+        top, bottom, left, right = list(top), list(bottom), list(left), list(right)
+        crossings = sorted(_span_onset_k(N, neigh, top, bottom, left, right,
+                                         [int(x) for x in rng.permutation(N)]) / N
+                           for _ in range(fillings))
+        R = [round(sum(1 for c in crossings if c <= p) / fillings, 4) for p in pgrid]
+        mean = float(np.mean(crossings)); std = float(np.std(crossings, ddof=1))
+        grids.append({"n": n, "N": N, "R": R, "mean": round(mean, 4), "std": round(std, 5)})
+    return {"sizes": list(sizes), "pgrid": pgrid, "pc": 0.5927, "fillings": fillings, "grids": grids}

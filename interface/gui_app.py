@@ -27,7 +27,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import interface.gui_backend as gb
 import visualiser.figures as figs
-from interface.demo import build_demo, build_scaling_demo   # imported as names (a local `demo` dict shadows the module)
+from interface.demo import build_demo, build_scaling_demo, build_nu_demo   # imported as names (a local `demo` dict shadows the module)
 import runner.jobs as jobs
 import interface.estimate as estimate           # NOT `est` -- a local float `est` shadows it below
 from engine.percolation import l_sweep
@@ -66,6 +66,11 @@ def cached_demo(lattice):
 @st.cache_data(show_spinner="Building the scaling grids…")
 def cached_scaling():
     return build_scaling_demo()
+
+
+@st.cache_data(show_spinner="Building the correlation-length grids…")
+def cached_nu():
+    return build_nu_demo()
 
 
 # Self-contained HTML/SVG+JS for the Toy demo. The slider lives INSIDE the component, so dragging it
@@ -310,6 +315,115 @@ def scaling_component(demo):
     """Render the interactive scaling toy. `demo` is build_scaling_demo()'s dict (sizes, pgrid, pc,
     fillings, grids); the whole thing is JSON-embedded and driven client-side."""
     components.html(_SCALING_HTML.replace("__DATA__", json.dumps(demo)), height=520)
+
+
+# ============================================================ CORRELATION-LENGTH (nu) COLLAPSE TOY
+_NU_HTML = r"""
+<style>
+ .nuw{font-family:sans-serif;color:#333;}
+ .nurow{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;align-items:flex-start;}
+ .nucol{display:flex;flex-direction:column;align-items:center;}
+ .nucap{font-size:11px;color:#666;margin-top:2px;}
+ .nusvg{background:#fff;border:1px solid #eee;}
+ .nuctl{display:flex;gap:10px;align-items:center;margin:12px 4px 4px;flex-wrap:wrap;}
+ .nub{padding:5px 11px;border:1px solid #ccc;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:13px;}
+ .nusl{flex:1;min-width:160px;} .nusum{font-size:13.5px;margin:6px 2px 0;line-height:1.45;}
+ .nuq{display:inline-block;height:9px;border-radius:5px;background:#e6e6ee;width:120px;vertical-align:middle;overflow:hidden;}
+ .nuqf{height:100%;background:#2e9e5b;width:0%;}
+</style>
+<div class="nuw">
+ <div class="nurow">
+  <div class="nucol"><svg class="nusvg" id="nu_raw" width="250" height="270"></svg><div class="nucap">raw: spanning probability R(p)</div></div>
+  <div class="nucol"><svg class="nusvg" id="nu_col" width="320" height="270"></svg><div class="nucap">rescaled by L<tspan>^</tspan>(1/&nu;)</div></div>
+ </div>
+ <div class="nuctl">
+  <button class="nub" id="nu_43">&nu; = 4/3</button>
+  <button class="nub" id="nu_best">best collapse</button>
+  <span>&nu; = <b id="nu_val">2.00</b></span>
+  <input class="nusl" id="nu_sl" type="range" min="100" max="220" value="200" title="Drag to rescale">
+  <span>collapse&nbsp;<span class="nuq"><span class="nuqf" id="nu_qf"></span></span></span>
+ </div>
+ <div class="nusum" id="nu_sum"></div>
+</div>
+<script>
+const G=__DATA__;
+(function(){
+ const NS="http://www.w3.org/2000/svg";
+ const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+ const sizes=G.sizes, pg=G.pgrid, pc=G.pc, grids=G.grids, S=sizes.length;
+ const PAL=["#4575b4","#74add1","#f6ad55","#f46d43","#d73027","#7b3294"];
+ const col=i=>PAL[i% PAL.length];
+ const el=id=>document.getElementById(id);
+
+ // ---- left: raw sigmoids R(p), fixed ----
+ (function(){
+  const svg=el("nu_raw"),W=250,H=270,mL=34,mR=8,mT=12,mB=30;
+  const x0=pg[0],x1=pg[pg.length-1];
+  const SX=p=>mL+(p-x0)/(x1-x0)*(W-mL-mR), SY=r=>H-mB-r*(H-mT-mB);
+  svg.appendChild(mk("rect",{x:mL,y:mT,width:W-mL-mR,height:H-mT-mB,fill:"#fff",stroke:"#eee"}));
+  [0,0.5,1].forEach(r=>{svg.appendChild(mk("line",{x1:mL,y1:SY(r),x2:W-mR,y2:SY(r),stroke:"#f0f0f2"}));
+   const t=mk("text",{x:mL-4,y:SY(r)+3,"text-anchor":"end","font-size":9,fill:"#999"});t.textContent=r;svg.appendChild(t);});
+  svg.appendChild(mk("line",{x1:SX(pc),y1:mT,x2:SX(pc),y2:H-mB,stroke:"#bbb","stroke-dasharray":"3 3"}));
+  const pcl=mk("text",{x:SX(pc),y:H-mB+11,"text-anchor":"middle","font-size":9,fill:"#999"});pcl.textContent="p_c";svg.appendChild(pcl);
+  grids.forEach((g,i)=>{
+   let d="";g.R.forEach((r,k)=>{d+=(k?"L":"M")+SX(pg[k]).toFixed(1)+" "+SY(r).toFixed(1)+" ";});
+   svg.appendChild(mk("path",{d:d,fill:"none",stroke:col(i),"stroke-width":1.7}));
+  });
+  svg.appendChild(mk("text",{x:(mL+W-mR)/2,y:H-4,"text-anchor":"middle","font-size":10,fill:"#666"})).textContent="occupation  p";
+ })();
+
+ // ---- right: collapse R vs s=(p-pc) L^{1/nu}, dynamic ----
+ const svg=el("nu_col"),W=320,H=270,mL=34,mR=10,mT=12,mB=34;
+ const SYr=r=>H-mB-r*(H-mT-mB);
+ const dyn=mk("g",{});svg.appendChild(dyn);
+ // Each grid is centred on its OWN crossing point (the mean drifts with L) and rescaled by L^(1/nu).
+ const cen=grids.map(g=>g.mean);
+ const pAt=(R,f)=>{let k=1;while(k<R.length-1&&R[k]<f)k++;const t=(f-R[k-1])/((R[k]-R[k-1])||1);return pg[k-1]+t*(pg[k]-pg[k-1]);};
+ const width=grids.map(g=>pAt(g.R,0.8)-pAt(g.R,0.2));     // 20-80 transition width per size (nu-free)
+ const sOf=(p,i,nu)=>(p-cen[i])*Math.pow(sizes[i],1.0/nu);
+ // Collapse score = spread of the rescaled widths (can't be gamed by shrinking a comparison window):
+ // it is minimal exactly when every grid's width scales as L^(-1/nu) with the SAME nu.
+ function residual(nu){
+  const x=grids.map((g,i)=>width[i]*Math.pow(sizes[i],1.0/nu));
+  const m=x.reduce((a,b)=>a+b,0)/S; let v=0; x.forEach(y=>{v+=(y-m)*(y-m);}); return (v/S)/(m*m || 1);
+ }
+ // one scan: best nu + residual range, so the quality bar auto-calibrates
+ let best=2.0,br=1e9,worst=0;
+ for(let v=100;v<=220;v++){const nu=v/100,r=residual(nu);if(r<br){br=r;best=nu;}if(r>worst)worst=r;}
+ function render(nu){
+  while(dyn.firstChild)dyn.removeChild(dyn.firstChild);
+  const sArr=grids.map((g,i)=>pg.map(p=>sOf(p,i,nu)));
+  const smax=Math.max(...sArr.map(a=>Math.max(Math.abs(a[0]),Math.abs(a[a.length-1]))))*1.05||1;
+  const SX=s=>mL+(s+smax)/(2*smax)*(W-mL-mR);
+  dyn.appendChild(mk("rect",{x:mL,y:mT,width:W-mL-mR,height:H-mT-mB,fill:"#fff",stroke:"#eee"}));
+  [0,0.5,1].forEach(r=>dyn.appendChild(mk("line",{x1:mL,y1:SYr(r),x2:W-mR,y2:SYr(r),stroke:"#f0f0f2"})));
+  dyn.appendChild(mk("line",{x1:SX(0),y1:mT,x2:SX(0),y2:H-mB,stroke:"#ddd","stroke-dasharray":"3 3"}));
+  grids.forEach((g,i)=>{let d="";g.R.forEach((r,k)=>{d+=(k?"L":"M")+SX(sArr[i][k]).toFixed(1)+" "+SYr(r).toFixed(1)+" ";});
+   dyn.appendChild(mk("path",{d:d,fill:"none",stroke:col(i),"stroke-width":1.8,"stroke-opacity":0.85}));});
+  dyn.appendChild(mk("text",{x:(mL+W-mR)/2,y:H-4,"text-anchor":"middle","font-size":10,fill:"#666"})).textContent="(p - p_c(L)) · L^(1/ν)";
+  el("nu_val").textContent=nu.toFixed(3);
+  const res=residual(nu), q=Math.max(0,Math.min(100,100*(worst-res)/((worst-br)||1)));
+  el("nu_qf").style.width=q.toFixed(0)+"%";
+  let msg;
+  if(nu>1.72)msg="High &nu;: barely rescaled — the curves stay <b>separate</b> (bigger grids are steeper). Drag &nu; down.";
+  else if(nu<1.18)msg="Low &nu;: <b>over-shot</b> — the rescaling has pushed the curves apart the other way.";
+  else msg="The size curves <b>collapse onto one master curve</b> — a single exponent &nu; rescales every grid the same way. That &nu; is the correlation-length exponent.";
+  el("nu_sum").innerHTML=msg+" <span style='color:#888'>On these small demo grids the best collapse sits near &nu;&nbsp;&asymp;&nbsp;"+best.toFixed(1)+"; at larger scales it converges to the exact 2D value <b>&nu; = 4/3</b>.</span>";
+ }
+ const sl=el("nu_sl");
+ sl.addEventListener("input",()=>render(+sl.value/100));
+ el("nu_43").addEventListener("click",()=>{sl.value=133;render(1.333);});
+ el("nu_best").addEventListener("click",()=>{sl.value=Math.round(best*100);render(best);});
+ render(2.0);
+})();
+</script>
+"""
+
+
+def nu_component(demo):
+    """Render the interactive correlation-length (nu) collapse toy. `demo` is build_nu_demo()'s dict
+    (sizes, pgrid, pc, per-size spanning-probability R). Client-side; the nu slider rescales the axis."""
+    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=470)
 
 
 def _fig_bytes(fig):
@@ -560,6 +674,15 @@ with tab_toy:
                 "dimension d_f. The faint dots behind each mean are ten independent fillings, so you can "
                 "see the run-to-run spread the average is built from — nothing is hidden.")
     scaling_component(cached_scaling())
+
+    # --- the OTHER exponent: correlation length nu, via finite-size data collapse ---
+    st.markdown("---")
+    st.markdown("**The sharpness of the transition — the exponent ν.** Each grid percolates at a slightly "
+                "different point from run to run; small grids over a *fuzzy* range of p, big grids *snap* "
+                "(left). Those separate S-curves hide a single law: rescale the occupation by L^(1/ν) and "
+                "**every size falls on one master curve** (right). Drag ν to collapse them — the exponent "
+                "that does it is the correlation-length exponent.")
+    nu_component(cached_nu())
 
 # ============================================================ VISUALISE engine
 with tab_vis:
