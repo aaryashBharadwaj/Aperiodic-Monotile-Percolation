@@ -323,9 +323,12 @@ _NU_HTML = r"""
  .nuw{font-family:sans-serif;color:#333;}
  .nustage{font-size:13px;color:#444;margin:16px 2px 6px;line-height:1.5;}
  .nustep{display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:#2e6db4;color:#fff;font-size:12px;font-weight:700;margin-right:6px;}
- .nurow{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;align-items:flex-start;}
+ .nutop{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap;justify-content:center;margin-top:4px;}
+ .nurow{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;max-width:352px;}
+ .nucolh{font-size:11px;color:#888;margin-bottom:4px;text-align:center;}
+ .nuleft,.nuright{display:flex;flex-direction:column;align-items:center;}
  .nucol{display:flex;flex-direction:column;align-items:center;}
- .nulbl{font-size:12px;margin-top:3px;text-align:center;line-height:1.3;font-weight:600;}
+ .nulbl{font-size:11px;margin-top:2px;text-align:center;line-height:1.25;font-weight:600;}
  .nusvg{background:#fff;border:1px solid #eee;}
  .nuctl{display:flex;gap:10px;align-items:center;margin:8px 4px 4px;flex-wrap:wrap;}
  .nub{padding:5px 11px;border:1px solid #ccc;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:13px;}
@@ -335,18 +338,22 @@ _NU_HTML = r"""
  .nubig{font-size:14.5px;min-height:2.2em;}
 </style>
 <div class="nuw">
- <div class="nustage"><span class="nustep">1</span>Drag the occupation up and watch each grid percolate — its largest cluster (gold) grows until it <b>spans across</b> and <b>freezes green</b>. The instant a grid spans, a dot lands on the plot below at (its size, the p where it percolated). Slide all the way up and all ten dots appear.</div>
- <div class="nurow" id="nu_grids"></div>
- <div class="nuctl">
-  <span>occupation p = <b id="nu_p">0.45</b></span>
-  <input class="nusl" id="nu_psl" type="range" min="45" max="62" value="45" title="open more sites">
-  <button class="nub" id="nu_replay">&#8635; replay</button>
- </div>
-
- <div class="nustage"><span class="nustep">2</span>Every finite grid percolates a little <b>below</b> the true threshold p_c, and the shortfall shrinks as the grid grows. Hit the button: the inverse-power curve p_c &minus; a·L<tspan>^</tspan>(&minus;1/ν) with <b>ν = 4/3</b> threads the dots and flattens onto p_c.</div>
- <div class="nucol"><svg class="nusvg" id="nu_plot" width="380" height="260"></svg></div>
- <div class="nuctl">
-  <button class="nub" id="nu_curve">draw the ν = 4/3 curve</button>
+ <div class="nustage">Drag the occupation slider — each grid percolates at its own point, <b>freezes green</b>, and drops a dot on the chart at (its size, the p where it crossed). Slide all the way up for all ten dots (slide back to re-watch), then draw the <b>ν = 4/3</b> curve: the finite-grid points climb toward the true p_c along p_c &minus; a·L<tspan>^</tspan>(&minus;1/ν).</div>
+ <div class="nutop">
+  <div class="nuleft">
+   <div class="nucolh">ten grids percolating</div>
+   <div class="nurow" id="nu_grids"></div>
+   <div class="nuctl">
+    <span>p = <b id="nu_p">0.45</b></span>
+    <input class="nusl" id="nu_psl" type="range" min="45" max="62" value="45" title="open more sites">
+    <button class="nub" id="nu_replay">&#8635;</button>
+   </div>
+  </div>
+  <div class="nuright">
+   <div class="nucolh">the chart the simulation builds</div>
+   <svg class="nusvg" id="nu_plot" width="340" height="260"></svg>
+   <div class="nuctl"><button class="nub" id="nu_curve">draw the ν = 4/3 curve</button></div>
+  </div>
  </div>
  <div class="nusum" id="nu_sum"></div>
 </div>
@@ -363,7 +370,7 @@ const G=__DATA__;
  // ---- (1) ten grids, each drawn with its MEDIAN filling; freeze green when it spans ----
  const holder=el("nu_grids");
  const LG=grids.map((g,gi)=>{
-  const box=74, cw=document.createElement("div"); cw.className="nucol";
+  const box=60, cw=document.createElement("div"); cw.className="nucol";
   const svg=document.createElementNS(NS,"svg"); svg.setAttribute("width",box);svg.setAttribute("height",box);svg.setAttribute("class","nusvg");
   const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.03;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
@@ -392,7 +399,7 @@ const G=__DATA__;
 
  // ---- (2) the plot the sim builds: each grid's percolation point p* vs L, climbing to p_c ----
  const dropped=[]; let showCurve=false;
- const plt=el("nu_plot"),pW=380,pH=260,pmL=44,pmR=14,pmT=12,pmB=34;
+ const plt=el("nu_plot"),pW=340,pH=260,pmL=44,pmR=14,pmT=12,pmB=34;
  const Lmin=sizes[0],Lmax=sizes[S-1], xlo=Math.log10(Lmin*0.9),xhi=Math.log10(Lmax*1.12);
  const PX=L=>pmL+(Math.log10(L)-xlo)/(xhi-xlo)*(pW-pmL-pmR);
  const ylo=0.53,yhi=0.60, PY=p=>pH-pmB-(Math.min(Math.max(p,ylo),yhi)-ylo)/(yhi-ylo)*(pH-pmT-pmB);
@@ -423,8 +430,10 @@ const G=__DATA__;
   LG.forEach(G3=>drawGrid(G3,Math.round(0.45*G3.g.N),false));drawPlot();
   el("nu_sum").innerHTML="Slide the occupation up — a dot lands as each grid spans; then draw the curve.";}
  function occ(p){el("nu_p").textContent=p.toFixed(3);
-  LG.forEach(G3=>{if(G3.frozen)return;
-   if(p>=G3.crossP){drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);G3.frozen=true;if(!G3.dropped){G3.dropped=true;dropped.push({gi:G3.gi,L:G3.g.n,p:G3.crossP});}}
+  LG.forEach(G3=>{
+   // bidirectional: above its crossing a grid holds its spanning (green) config; below it re-fills
+   // (gold), so a confused reader can slide back and re-watch. The dropped dot stays either way.
+   if(p>=G3.crossP){drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);if(!G3.dropped){G3.dropped=true;dropped.push({gi:G3.gi,L:G3.g.n,p:G3.crossP});}}
    else drawGrid(G3,Math.round(p*G3.g.N),false);});
   drawPlot();}
  el("nu_psl").addEventListener("input",()=>occ(+el("nu_psl").value/100));
@@ -442,7 +451,7 @@ const G=__DATA__;
 def nu_component(demo):
     """Render the interactive correlation-length (nu) collapse toy. `demo` is build_nu_demo()'s dict
     (sizes, pgrid, pc, per-size spanning-probability R). Client-side; the nu slider rescales the axis."""
-    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=760)
+    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=480)
 
 
 def _fig_bytes(fig):
