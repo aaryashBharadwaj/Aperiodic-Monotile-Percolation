@@ -215,7 +215,7 @@ const G=__DATA__;
   const svg=document.createElementNS(NS,"svg"); svg.setAttribute("width",box); svg.setAttribute("height",box); svg.setAttribute("class","scsvg");
   const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.04;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
-  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.40*u;
+  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.5*u;             // touching sites -> clusters look solid
   const nEl=g.coords.map(c=>{const ci=mk("circle",{cx:c[0],cy:fy(c[1]),r:R});svg.appendChild(ci);return ci;});
   const lbl=document.createElement("div"); lbl.className="sclbl"; lbl.textContent="L="+g.n;
   col.appendChild(svg); col.appendChild(lbl); holder.appendChild(col);
@@ -231,9 +231,9 @@ const G=__DATA__;
   const sz=new Int32Array(N);let bigR=-1,bigN=0;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
-   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",GOLD);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.25);}
+   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",GOLD);ci.removeAttribute("stroke");}
    else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
-   else{ci.setAttribute("fill","#e8e8ee");ci.removeAttribute("stroke");}}
+   else{ci.setAttribute("fill","#eef1f5");ci.removeAttribute("stroke");}}
  }
 
  // ---- log-log plot: share (%) of largest cluster vs grid size L ----
@@ -344,17 +344,17 @@ _NU_HTML = r"""
   <div class="nuleft">
    <div class="nucolh">ten grids percolating</div>
    <div class="nurow" id="nu_grids"></div>
-   <div class="nuctl">
-    <span>p = <b id="nu_p">0.45</b></span>
-    <input class="nusl" id="nu_psl" type="range" min="45" max="62" value="45" title="open more sites">
-    <button class="nub" id="nu_replay">&#8635;</button>
-   </div>
   </div>
   <div class="nuright">
    <div class="nucolh">the chart the simulation builds</div>
    <svg class="nusvg" id="nu_plot" width="340" height="260"></svg>
    <div class="nuctl"><button class="nub" id="nu_curve">draw the ν = 4/3 curve</button></div>
   </div>
+ </div>
+ <div class="nuctl" style="justify-content:center;margin-top:12px;">
+  <span>p = <b id="nu_p">0.450</b></span>
+  <input class="nusl" id="nu_psl" type="range" min="450" max="620" value="450" step="1" style="max-width:600px;" title="open more sites">
+  <button class="nub" id="nu_replay" title="reset">&#8635;</button>
  </div>
  <div class="nusum" id="nu_sum"></div>
 </div>
@@ -376,7 +376,7 @@ const G=__DATA__;
   const svg=document.createElementNS(NS,"svg"); svg.setAttribute("width",box);svg.setAttribute("height",box);svg.setAttribute("class","nusvg");
   const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.03;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
-  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.42*u;
+  const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.5*u;             // touching sites -> clusters look solid
   const nEl=g.coords.map(c=>{const ci=mk("circle",{cx:c[0],cy:fy(c[1]),r:R});svg.appendChild(ci);return ci;});
   const bot=document.createElement("div"); bot.className="nulblbot";
   cw.appendChild(top);cw.appendChild(svg);cw.appendChild(bot);holder.appendChild(cw);
@@ -392,9 +392,9 @@ const G=__DATA__;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
   const cc=frozen?col(G3.gi):GOLD;                          // spanning cluster wears this grid's dot colour
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
-   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",cc);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.2);}
+   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",cc);ci.removeAttribute("stroke");}
    else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
-   else{ci.setAttribute("fill","#e8e8ee");ci.removeAttribute("stroke");}}
+   else{ci.setAttribute("fill","#eef1f5");ci.removeAttribute("stroke");}}
   G3.bot.innerHTML=frozen?"<b style='color:"+col(G3.gi)+"'>p_c ≈ "+G3.crossP.toFixed(2)+"</b>":"<span style='color:#ccc'>…</span>";
  }
 
@@ -428,7 +428,7 @@ const G=__DATA__;
 
  // ---- occupation slider: freeze each grid at its crossing point and drop its dot ----
  function reset(){curP=0.45;showCurve=false;
-  el("nu_psl").value=45;el("nu_p").textContent="0.450";
+  el("nu_psl").value=450;el("nu_p").textContent="0.450";
   LG.forEach(G3=>drawGrid(G3,Math.round(0.45*G3.g.N),false));drawPlot();
   el("nu_sum").innerHTML="Slide the occupation up — a dot appears as each grid spans (and vanishes if you slide back); then draw the curve.";}
  function occ(p){curP=p;el("nu_p").textContent=p.toFixed(3);
@@ -437,7 +437,7 @@ const G=__DATA__;
   LG.forEach(G3=>{if(p>=G3.crossP)drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);
                   else drawGrid(G3,Math.round(p*G3.g.N),false);});
   drawPlot();}
- el("nu_psl").addEventListener("input",()=>occ(+el("nu_psl").value/100));
+ el("nu_psl").addEventListener("input",()=>occ(+el("nu_psl").value/1000));
  el("nu_replay").addEventListener("click",reset);
  el("nu_curve").addEventListener("click",()=>{
   if(LG.filter(G3=>curP>=G3.crossP).length<sizes.length){el("nu_sum").innerHTML="Slide all the way up first, so every grid has percolated.";return;}
@@ -452,7 +452,7 @@ const G=__DATA__;
 def nu_component(demo):
     """Render the interactive correlation-length (nu) collapse toy. `demo` is build_nu_demo()'s dict
     (sizes, pgrid, pc, per-size spanning-probability R). Client-side; the nu slider rescales the axis."""
-    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=480)
+    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=510)
 
 
 def _fig_bytes(fig):
