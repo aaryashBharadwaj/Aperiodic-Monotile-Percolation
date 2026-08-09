@@ -155,12 +155,20 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3):
         raise ValueError("Tile(0,0) is degenerate -- nothing to build.")
     is_dual = graph_type.startswith("Dual")
     center_mode = "square"
+    center_src = None   # if set, resolve the frame centre from these tile-vertex polygons instead of
+                        # the graph nodes. For an APERIODIC dual the nodes are tile CENTROIDS, whose
+                        # non-uniform density fools largest_square_center into a wrong, off-centre
+                        # window (a different patch of the tiling -> wrong p_c AND a spurious direction
+                        # bias). Centring on the vertices puts the dual on the SAME physical square as
+                        # the direct graph (the paper's shared centre). Periodic duals are centre-
+                        # invariant, so they keep the node-based centre unchanged.
 
     if name in ("Hat", "Spectre"):
         patch_obj, lvl = _hat_patch(patch) if name == "Hat" else _spectre_patch(patch)
         if is_dual:
             polys = collect_leaf_polygons(patch_obj, (patch + 1) if name == "Hat" else 10)
             coords, neighbors, _ = build_dual_from_polygons(polys)
+            center_src = polys
         else:
             coords, neighbors = build_neighbor_graph_fast(patch_obj, level=lvl)
     elif name in ("Comet", "Chevron"):
@@ -194,7 +202,8 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3):
         cx, cy = (x.min() + x.max()) / 2.0, (y.min() + y.max()) / 2.0
         side = min(x.max() - x.min(), y.max() - y.min())
     else:
-        cx, cy, side = largest_square_center(coords)
+        center_pts = np.concatenate(center_src, axis=0) if center_src is not None else coords
+        cx, cy, side = largest_square_center(center_pts)
 
     return {"coords": coords, "neighbors": neighbors,
             "center": (float(cx), float(cy)), "side": float(side),
