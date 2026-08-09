@@ -204,6 +204,7 @@ const G=__DATA__;
 (function(){
  const NS="http://www.w3.org/2000/svg", GOLD="#f4b400", BLUE="#1f5fa8", GREY="#c2c2cc";
  const sizes=G.sizes, pgrid=G.pgrid, P=pgrid.length, F=G.fillings, pc=G.pc;
+ const scol=i=>"hsl("+Math.round(222-222*i/Math.max(1,sizes.length-1))+",62%,48%)";   // per-size hue
  const pcIdx=pgrid.reduce((best,p,i)=>Math.abs(p-pc)<Math.abs(pgrid[best]-pc)?i:best,0);
  const el=id=>document.getElementById(id);
  const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
@@ -217,7 +218,7 @@ const G=__DATA__;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
   const fy=y=>(y0+y1)-y,u=(x1-x0)/g.n,R=0.5*u;             // touching sites -> clusters look solid
   const nEl=g.coords.map(c=>{const ci=mk("circle",{cx:c[0],cy:fy(c[1]),r:R});svg.appendChild(ci);return ci;});
-  const lbl=document.createElement("div"); lbl.className="sclbl"; lbl.textContent="L="+g.n;
+  const lbl=document.createElement("div"); lbl.className="sclbl"; lbl.textContent="L="+g.n; lbl.style.color=scol(gi);
   col.appendChild(svg); col.appendChild(lbl); holder.appendChild(col);
   return {g,nEl,R};
  });
@@ -231,9 +232,8 @@ const G=__DATA__;
   const sz=new Int32Array(N);let bigR=-1,bigN=0;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
-   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",GOLD);ci.removeAttribute("stroke");}
-   else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
-   else{ci.setAttribute("fill","#eef1f5");ci.removeAttribute("stroke");}}
+   if(open[v]&&find(v)===bigR){ci.setAttribute("fill",scol(gi));ci.removeAttribute("stroke");}
+   else{ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}}
  }
 
  // ---- log-log plot: share (%) of largest cluster vs grid size L ----
@@ -277,10 +277,10 @@ const G=__DATA__;
    for(let f=0;f<F;f++){
     const s=g.shares[f][pidx]; sum+=s;
     dyn.appendChild(mk("circle",{cx:SX(g.n),cy:SY(s),r:2.4,fill:f===0?"none":GREY,
-      stroke:f===0?GOLD:"none","stroke-width":f===0?1.4:0,"fill-opacity":0.55}));
+      stroke:f===0?scol(gi):"none","stroke-width":f===0?1.4:0,"fill-opacity":0.55}));
    }
    const m=sum/F; means.push(m);
-   dyn.appendChild(mk("circle",{cx:SX(g.n),cy:SY(m),r:4.2,fill:BLUE,stroke:"#fff","stroke-width":1}));
+   dyn.appendChild(mk("circle",{cx:SX(g.n),cy:SY(m),r:4.2,fill:scol(gi),stroke:"#fff","stroke-width":1}));
    if(m>0){mLx.push(Math.log10(g.n));mLy.push(Math.log10(m));}
   });
   // fit line through the per-size means; slope of log(share) vs log(L) is d_f-2
@@ -391,10 +391,11 @@ const G=__DATA__;
   const sz=new Int32Array(N);let bigR=-1,bigN=0;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
   const cc=frozen?col(G3.gi):GOLD;                          // spanning cluster wears this grid's dot colour
+  // every cell is filled: the spanning cluster in its colour, everything else (open or closed) light
+  // blue -- no white "holes".
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
    if(open[v]&&find(v)===bigR){ci.setAttribute("fill",cc);ci.removeAttribute("stroke");}
-   else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
-   else{ci.setAttribute("fill","#eef1f5");ci.removeAttribute("stroke");}}
+   else{ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}}
   G3.bot.innerHTML=frozen?"<b style='color:"+col(G3.gi)+"'>p_c ≈ "+G3.crossP.toFixed(2)+"</b>":"<span style='color:#ccc'>…</span>";
  }
 
