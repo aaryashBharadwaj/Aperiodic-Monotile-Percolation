@@ -380,7 +380,9 @@ const G=__DATA__;
   const nEl=g.coords.map(c=>{const ci=mk("circle",{cx:c[0],cy:fy(c[1]),r:R});svg.appendChild(ci);return ci;});
   const bot=document.createElement("div"); bot.className="nulblbot";
   cw.appendChild(top);cw.appendChild(svg);cw.appendChild(bot);holder.appendChild(cw);
-  return {g,gi,nEl,R,bot,order:g.order,crossP:g.crossP};
+  // crossK = the exact site count at which THIS drawn filling spans (crossP is rounded, so keying off
+  // p directly can mis-colour the spanning shape as "not yet" for a sliver of p just below it).
+  return {g,gi,nEl,R,bot,order:g.order,crossP:g.crossP,crossK:Math.round(g.crossP*g.N),spanned:false};
  });
  function drawGrid(G3,k,frozen){
   const g=G3.g,N=g.N,edges=g.edges,order=G3.order;
@@ -414,7 +416,7 @@ const G=__DATA__;
   sizes.forEach((L,gi)=>{const t=mk("text",{x:PX(L),y:pH-pmB+12,"text-anchor":"middle","font-size":9,fill:col(gi),"font-weight":700});t.textContent=L;pdyn.appendChild(t);});
   pdyn.appendChild(mk("line",{x1:pmL,y1:PY(pc),x2:pW-pmR,y2:PY(pc),stroke:"#c0392b","stroke-dasharray":"4 3"}));
   pdyn.appendChild(mk("text",{x:pW-pmR-2,y:PY(pc)-4,"text-anchor":"end","font-size":10,fill:"#c0392b"})).textContent="true p_c = 0.593";
-  const shown=LG.filter(G3=>curP>=G3.crossP);               // grids currently percolating
+  const shown=LG.filter(G3=>G3.spanned);                    // grids currently percolating
   if(showCurve && shown.length===LG.length){                // fit a in p_c - p* = a·L^(-1/nu), nu=4/3
    let sxy=0,sxx=0;shown.forEach(G3=>{const x=Math.pow(G3.g.n,-0.75),y=pc-G3.crossP;sxy+=x*y;sxx+=x*x;});
    const a=sxx?sxy/sxx:0;let dd="";
@@ -430,18 +432,18 @@ const G=__DATA__;
  // ---- occupation slider: freeze each grid at its crossing point and drop its dot ----
  function reset(){curP=0.45;showCurve=false;
   el("nu_psl").value=450;el("nu_p").textContent="0.450";
-  LG.forEach(G3=>drawGrid(G3,Math.round(0.45*G3.g.N),false));drawPlot();
+  LG.forEach(G3=>{G3.spanned=false;drawGrid(G3,Math.round(0.45*G3.g.N),false);});drawPlot();
   el("nu_sum").innerHTML="Slide the occupation up — a dot appears as each grid spans (and vanishes if you slide back); then draw the curve.";}
  function occ(p){curP=p;el("nu_p").textContent=p.toFixed(3);
-  // fully bidirectional: a grid holds its spanning config above its crossing and re-fills below it;
-  // its dot on the chart appears/disappears in step, so sliding back rewinds everything.
-  LG.forEach(G3=>{if(p>=G3.crossP)drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);
-                  else drawGrid(G3,Math.round(p*G3.g.N),false);});
+  // A grid is spanning exactly once the drawn site count reaches crossK. Colour, freeze and the dot all
+  // key off that (not off p vs the rounded crossP), so the spanning shape is never shown as "not yet".
+  LG.forEach(G3=>{const k=Math.round(p*G3.g.N); G3.spanned=k>=G3.crossK;
+   if(G3.spanned)drawGrid(G3,G3.crossK,true); else drawGrid(G3,k,false);});
   drawPlot();}
  el("nu_psl").addEventListener("input",()=>occ(+el("nu_psl").value/1000));
  el("nu_replay").addEventListener("click",reset);
  el("nu_curve").addEventListener("click",()=>{
-  if(LG.filter(G3=>curP>=G3.crossP).length<sizes.length){el("nu_sum").innerHTML="Slide all the way up first, so every grid has percolated.";return;}
+  if(LG.filter(G3=>G3.spanned).length<sizes.length){el("nu_sum").innerHTML="Slide all the way up first, so every grid has percolated.";return;}
   showCurve=true;drawPlot();
   el("nu_sum").innerHTML="The <b>ν = 4/3</b> curve threads the dots and flattens onto p_c — each grid's shortfall p_c − p* scales as L<sup>−1/ν</sup>. <span style='color:#888'>On grids this small the fit is approximate (their true slope is a hair off 4/3); it tightens as the grids grow.</span>";});
  reset();
