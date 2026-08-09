@@ -332,21 +332,24 @@ _NU_HTML = r"""
  .nusl{flex:1;min-width:150px;} .nusum{font-size:13.5px;margin:8px 2px 0;line-height:1.45;}
  .nuq{display:inline-block;height:9px;border-radius:5px;background:#e6e6ee;width:110px;vertical-align:middle;overflow:hidden;}
  .nuqf{height:100%;background:#2e9e5b;width:0%;}
+ .nubig{font-size:14.5px;min-height:2.2em;}
 </style>
 <div class="nuw">
- <div class="nustage"><span class="nustep">1</span>Drag the occupation up and watch each grid percolate — the largest cluster (gold) grows until it <b>spans across</b> (turns green). Hit <b>new filling</b> a few times: the point where it spans <b>jumps around wildly on the small grid</b>, <b>barely moves on the big one</b>.</div>
+ <div class="nustage"><span class="nustep">1</span>Drag the occupation up. Each grid's largest cluster (gold) grows until it <b>spans across</b> — then it <b>freezes green</b> and drops a dot on the plot below, recording the p at which THIS grid percolated. Run it many times (<b>new run</b>, or <b>run &times;25</b>) to pile up the dots.</div>
  <div class="nurow" id="nu_grids"></div>
  <div class="nuctl">
   <span>occupation p = <b id="nu_p">0.45</b></span>
   <input class="nusl" id="nu_psl" type="range" min="45" max="74" value="45" title="open more sites">
-  <button class="nub" id="nu_shuf">&#127922; new filling</button>
+  <button class="nub" id="nu_shuf">&#127922; new run</button>
+  <button class="nub" id="nu_run25">run &times;25</button>
  </div>
 
- <div class="nustage"><span class="nustep">2</span>Repeat over hundreds of fillings: the <b>fraction that have spanned</b> by occupation p is the curve R(p). The blue line marks your p from above; bigger grids switch on more <b>sharply</b>.</div>
- <div class="nucol"><svg class="nusvg" id="nu_raw" width="340" height="210"></svg></div>
+ <div class="nustage"><span class="nustep">2</span>The plot the simulation is building — each grid's percolation point vs its size. The clouds are <b>wide for small grids, tight for big ones</b>: that spread (width) shrinks as L<tspan>^</tspan>(&minus;1/ν), which is exactly how ν is read off.</div>
+ <div class="nucol"><svg class="nusvg" id="nu_scatter" width="360" height="250"></svg></div>
+ <div class="nusum nubig" id="nu_read"></div>
 
- <div class="nustage"><span class="nustep">3</span>That sharpness is set by one exponent ν. Rescale the width by L<tspan>^</tspan>(1/ν) and <b>every size lands on a single master curve</b>. Drag ν to collapse them.</div>
- <div class="nucol"><svg class="nusvg" id="nu_col" width="340" height="220"></svg></div>
+ <div class="nustage"><span class="nustep">3</span>Same fact as a collapse: rescale the width by L<tspan>^</tspan>(1/ν) and <b>every size lands on one master curve</b>. Drag ν.</div>
+ <div class="nucol"><svg class="nusvg" id="nu_col" width="340" height="210"></svg></div>
  <div class="nuctl">
   <button class="nub" id="nu_43">ν = 4/3</button>
   <button class="nub" id="nu_best">best collapse</button>
@@ -367,11 +370,12 @@ const G=__DATA__;
  const idxOf=n=>Math.max(0,sizes.indexOf(n));
  const el=id=>document.getElementById(id);
  const GOLD="#f4b400", GREEN="#2e9e5b";
+ const genOrder=N=>{const a=Array.from({length:N},(_,i)=>i);for(let i=N-1;i>0;i--){const j=(Math.random()*(i+1))|0,t=a[i];a[i]=a[j];a[j]=t;}return a;};
 
- // ---- (1) live percolating grids: drag occupation, watch the largest cluster span ----
+ // ---- (1) six live grids that FREEZE the moment they percolate ----
  const holder=el("nu_grids");
- const LG=live.map(g=>{
-  const box=132, cw=document.createElement("div"); cw.className="nucol";
+ const LG=live.map((g,gi)=>{
+  const box=88, cw=document.createElement("div"); cw.className="nucol";
   const svg=document.createElementNS(NS,"svg"); svg.setAttribute("width",box);svg.setAttribute("height",box);svg.setAttribute("class","nusvg");
   const b=g.bbox,x0=b[0],x1=b[1],y0=b[2],y1=b[3],pad=(x1-x0)*0.03;
   svg.setAttribute("viewBox",(x0-pad)+" "+(y0-pad)+" "+((x1-x0)+2*pad)+" "+((y1-y0)+2*pad));
@@ -381,12 +385,12 @@ const G=__DATA__;
   g.edges.forEach(e=>{neigh[e[0]].push(e[1]);neigh[e[1]].push(e[0]);});
   const lbl=document.createElement("div"); lbl.className="nulbl";
   cw.appendChild(svg);cw.appendChild(lbl);holder.appendChild(cw);
-  return {g,nEl,R,lbl,neigh,pcross:0,setT:new Set(g.top),setB:new Set(g.bottom),setL:new Set(g.left),setR:new Set(g.right)};
+  return {g,gi,nEl,R,lbl,neigh,order:null,crossP:1,frozen:false,dropped:false,
+          setT:new Set(g.top),setB:new Set(g.bottom),setL:new Set(g.left),setR:new Set(g.right)};
  });
- let ord=0;
- // this filling's crossing point: the occupation at which THIS grid first spans (jitters run-to-run).
- function computeCross(G3){
-  const g=G3.g,N=g.N,order=g.orders[ord%g.orders.length],neigh=G3.neigh,T=1,B=2,Lb=4,Rb=8;
+ // first-spanning occupation of an open ORDER (incremental union-find + per-cluster boundary bitmask)
+ function crossOf(order,G3){
+  const N=G3.g.N,neigh=G3.neigh,T=1,B=2,Lb=4,Rb=8;
   const fm=new Int8Array(N);
   G3.setT.forEach(v=>fm[v]|=T);G3.setB.forEach(v=>fm[v]|=B);G3.setL.forEach(v=>fm[v]|=Lb);G3.setR.forEach(v=>fm[v]|=Rb);
   const par=new Int32Array(N);for(let i=0;i<N;i++)par[i]=i;const sz=new Int32Array(N).fill(1);const open=new Uint8Array(N);
@@ -396,41 +400,59 @@ const G=__DATA__;
    const m=fm[rv];if((m&(T|B))===(T|B)||(m&(Lb|Rb))===(Lb|Rb))return (step+1)/N;}
   return 1;
  }
- const refreshCross=()=>LG.forEach(G3=>{G3.pcross=computeCross(G3);});
- function drawLive(gi,p){
-  const G3=LG[gi],g=G3.g,N=g.N,edges=g.edges,order=g.orders[ord%g.orders.length],k=Math.min(Math.round(p*N),N);
-  const par=new Int32Array(N);for(let i=0;i<N;i++)par[i]=i;
-  const open=new Uint8Array(N);
+ function drawGrid(G3,k,frozen){
+  const g=G3.g,N=g.N,edges=g.edges,order=G3.order;
+  const par=new Int32Array(N);for(let i=0;i<N;i++)par[i]=i;const open=new Uint8Array(N);
   function find(x){let r=x;while(par[r]!==r)r=par[r];while(par[x]!==r){const n=par[x];par[x]=r;x=n;}return r;}
   for(let i=0;i<k;i++)open[order[i]]=1;
   for(let e=0;e<edges.length;e++){const a=edges[e][0],b=edges[e][1];if(open[a]&&open[b]){const ra=find(a),rb=find(b);if(ra!==rb)par[ra]=rb;}}
   const sz=new Int32Array(N);let bigR=-1,bigN=0;
   for(let v=0;v<N;v++){if(open[v]){const r=find(v);sz[r]++;if(sz[r]>bigN){bigN=sz[r];bigR=r;}}}
-  let t=false,bt=false,l=false,r=false;
-  if(bigR>=0)for(let v=0;v<N;v++){if(open[v]&&find(v)===bigR){if(G3.setT.has(v))t=true;if(G3.setB.has(v))bt=true;if(G3.setL.has(v))l=true;if(G3.setR.has(v))r=true;}}
-  const spans=(t&&bt)||(l&&r), cc=spans?GREEN:GOLD;
+  const cc=frozen?GREEN:GOLD;
   for(let v=0;v<N;v++){const ci=G3.nEl[v];
    if(open[v]&&find(v)===bigR){ci.setAttribute("fill",cc);ci.setAttribute("stroke","#111");ci.setAttribute("stroke-width",G3.R*0.2);}
    else if(open[v]){ci.setAttribute("fill","#a9cbe8");ci.removeAttribute("stroke");}
    else{ci.setAttribute("fill","#e8e8ee");ci.removeAttribute("stroke");}}
-  G3.lbl.innerHTML="<span style='color:"+col(idxOf(g.n))+"'>L = "+g.n+"</span> "
-   +(spans?"<b style='color:#2e9e5b'>SPANS ✓</b>":"<span style='color:#aaa'>not yet</span>")
-   +"<br><span style='font-weight:400;color:#777'>this filling spans at p ≈ <b>"+G3.pcross.toFixed(2)+"</b></span>";
+  G3.lbl.innerHTML="<b style='color:"+col(G3.gi)+"'>L="+g.n+"</b> "
+   +(frozen?"<b style='color:#2e9e5b'>spans @ "+G3.crossP.toFixed(2)+"</b>":"<span style='color:#bbb'>…</span>");
  }
 
- // ---- (2) sigmoid R(p,L) with a movable p-line synced to the occupation slider ----
- const rsvg=el("nu_raw"),rW=340,rH=210,rmL=34,rmR=10,rmT=12,rmB=30;
- const rx0=pg[0],rx1=pg[pg.length-1];
- const RSX=p=>rmL+(Math.min(Math.max(p,rx0),rx1)-rx0)/(rx1-rx0)*(rW-rmL-rmR), RSY=r=>rH-rmB-r*(rH-rmT-rmB);
- rsvg.appendChild(mk("rect",{x:rmL,y:rmT,width:rW-rmL-rmR,height:rH-rmT-rmB,fill:"#fff",stroke:"#eee"}));
- [0,0.5,1].forEach(r=>{rsvg.appendChild(mk("line",{x1:rmL,y1:RSY(r),x2:rW-rmR,y2:RSY(r),stroke:"#f0f0f2"}));
-  const t=mk("text",{x:rmL-4,y:RSY(r)+3,"text-anchor":"end","font-size":9,fill:"#999"});t.textContent=r;rsvg.appendChild(t);});
- rsvg.appendChild(mk("line",{x1:RSX(pc),y1:rmT,x2:RSX(pc),y2:rH-rmB,stroke:"#ccc","stroke-dasharray":"2 2"}));
- grids.forEach((g,i)=>{let d="";g.R.forEach((r,k)=>{d+=(k?"L":"M")+RSX(pg[k]).toFixed(1)+" "+RSY(r).toFixed(1)+" ";});
-  rsvg.appendChild(mk("path",{d:d,fill:"none",stroke:col(i),"stroke-width":1.7}));});
- rsvg.appendChild(mk("text",{x:(rmL+rW-rmR)/2,y:rH-4,"text-anchor":"middle","font-size":10,fill:"#666"})).textContent="occupation  p    (curve colour = grid size)";
- const pLine=mk("line",{y1:rmT,y2:rH-rmB,stroke:"#2e6db4","stroke-width":1.5});rsvg.appendChild(pLine);
- const setPLine=p=>{const x=RSX(p);pLine.setAttribute("x1",x);pLine.setAttribute("x2",x);};
+ // ---- (2) the plot the sim builds: crossing p vs L, clouds narrowing ----
+ const pts=sizes.map(()=>[]);           // per-size list of {p, jitter}
+ const scv=el("nu_scatter"),sW=360,sH=250,smL=40,smR=12,smT=10,smB=32;
+ const xlo=Math.log10(sizes[0]*0.85), xhi=Math.log10(sizes[S-1]*1.15);
+ const SXs=L=>smL+(Math.log10(L)-xlo)/(xhi-xlo)*(sW-smL-smR);
+ const yl=0.45,yh=0.72, SYs=p=>sH-smB-(Math.min(Math.max(p,yl),yh)-yl)/(yh-yl)*(sH-smT-smB);
+ const sdyn=mk("g",{});scv.appendChild(sdyn);
+ let curP=0.45;
+ const addPt=(gi,p)=>{const a=pts[gi];a.push({p:p,j:Math.random()*8-4});if(a.length>60)a.shift();};
+ function nuFromWidths(){
+  const xs=[],ys=[];
+  sizes.forEach((L,gi)=>{const a=pts[gi];if(a.length>=4){const m=a.reduce((u,d)=>u+d.p,0)/a.length;let v=0;a.forEach(d=>v+=(d.p-m)*(d.p-m));const sd=Math.sqrt(v/(a.length-1));if(sd>1e-6){xs.push(Math.log(L));ys.push(Math.log(sd));}}});
+  if(xs.length<3)return null;
+  const mx=xs.reduce((a,b)=>a+b,0)/xs.length,my=ys.reduce((a,b)=>a+b,0)/ys.length;let sxy=0,sxx=0;for(let i=0;i<xs.length;i++){sxy+=(xs[i]-mx)*(ys[i]-my);sxx+=(xs[i]-mx)*(xs[i]-mx);}
+  const slope=sxx?sxy/sxx:0;return slope<0?-1/slope:null;
+ }
+ function drawScatter(){
+  while(sdyn.firstChild)sdyn.removeChild(sdyn.firstChild);
+  sdyn.appendChild(mk("rect",{x:smL,y:smT,width:sW-smL-smR,height:sH-smT-smB,fill:"#fff",stroke:"#eee"}));
+  [0.5,0.55,0.6,0.65,0.7].forEach(p=>{sdyn.appendChild(mk("line",{x1:smL,y1:SYs(p),x2:sW-smR,y2:SYs(p),stroke:"#f4f4f6"}));
+   const t=mk("text",{x:smL-4,y:SYs(p)+3,"text-anchor":"end","font-size":9,fill:"#999"});t.textContent=p.toFixed(2);sdyn.appendChild(t);});
+  sizes.forEach((L,gi)=>{const t=mk("text",{x:SXs(L),y:sH-smB+12,"text-anchor":"middle","font-size":9,fill:col(gi),"font-weight":700});t.textContent=L;sdyn.appendChild(t);});
+  sdyn.appendChild(mk("line",{x1:smL,y1:SYs(pc),x2:sW-smR,y2:SYs(pc),stroke:"#bbb","stroke-dasharray":"4 3"}));
+  sdyn.appendChild(mk("text",{x:sW-smR-2,y:SYs(pc)-3,"text-anchor":"end","font-size":9,fill:"#999"})).textContent="p_c";
+  sdyn.appendChild(mk("line",{x1:smL,y1:SYs(curP),x2:sW-smR,y2:SYs(curP),stroke:"#2e6db4","stroke-width":1,"stroke-opacity":0.45}));
+  sizes.forEach((L,gi)=>{const a=pts[gi],x=SXs(L);
+   a.forEach(d=>sdyn.appendChild(mk("circle",{cx:x+d.j,cy:SYs(d.p),r:2.1,fill:col(gi),"fill-opacity":0.5})));
+   if(a.length>=2){const m=a.reduce((u,d)=>u+d.p,0)/a.length;let v=0;a.forEach(d=>v+=(d.p-m)*(d.p-m));const sd=Math.sqrt(v/(a.length-1));
+    sdyn.appendChild(mk("line",{x1:x,y1:SYs(m-sd),x2:x,y2:SYs(m+sd),stroke:col(gi),"stroke-width":2}));
+    sdyn.appendChild(mk("circle",{cx:x,cy:SYs(m),r:3.4,fill:"#fff",stroke:col(gi),"stroke-width":2}));}
+  });
+  sdyn.appendChild(mk("text",{x:(smL+sW-smR)/2,y:sH-4,"text-anchor":"middle","font-size":10,fill:"#666"})).textContent="grid size  L  (log)";
+  const nu=nuFromWidths(), total=pts.reduce((s,a)=>s+a.length,0);
+  if(nu) el("nu_read").innerHTML="the spread shrinks as L<sup>&minus;1/ν</sup> &rArr; <b>ν ≈ "+nu.toFixed(2)+"</b> <span style='font-size:12px;color:#888'>(from "+total+" drops; small grids overshoot — &rarr; 4/3 at larger scale)</span>";
+  else el("nu_read").innerHTML="<span style='font-size:12px;color:#888'>Drop a few runs (each size needs ~4 dots) and ν appears from the shrinking spread…</span>";
+ }
 
  // ---- (3) collapse R vs s=(p-p_c(L)) L^{1/nu}, dynamic ----
  const svg=el("nu_col"),W=340,H=220,mL=34,mR=10,mT=12,mB=34;
@@ -470,17 +492,24 @@ const G=__DATA__;
   else msg="The size curves <b>collapse onto one master curve</b> — a single exponent &nu; rescales every grid the same way. That &nu; is the correlation-length exponent.";
   el("nu_sum").innerHTML=msg+" <span style='color:#888'>On these small demo grids the best collapse sits near &nu;&nbsp;&asymp;&nbsp;"+best.toFixed(1)+"; at larger scales it converges to the exact 2D value <b>&nu; = 4/3</b>.</span>";
  }
- // occupation slider drives (1) the live grids and (2) the p-line on the sigmoid
- const psl=el("nu_psl");
- function occ(p){el("nu_p").textContent=p.toFixed(3);LG.forEach((_,gi)=>drawLive(gi,p));setPLine(p);}
- psl.addEventListener("input",()=>occ(+psl.value/100));
- el("nu_shuf").addEventListener("click",()=>{ord++;refreshCross();occ(+psl.value/100);});
+ // occupation slider drives the grids (freeze + drop a dot at the crossing point); buttons add runs
+ function newRun(){LG.forEach(G3=>{G3.order=genOrder(G3.g.N);G3.crossP=crossOf(G3.order,G3);G3.frozen=false;G3.dropped=false;});
+  el("nu_psl").value=45;curP=0.45;el("nu_p").textContent="0.450";
+  LG.forEach(G3=>drawGrid(G3,Math.round(0.45*G3.g.N),false));drawScatter();}
+ function occ(p){curP=p;el("nu_p").textContent=p.toFixed(3);
+  LG.forEach(G3=>{if(G3.frozen)return;
+   if(p>=G3.crossP){drawGrid(G3,Math.round(G3.crossP*G3.g.N),true);G3.frozen=true;if(!G3.dropped){G3.dropped=true;addPt(G3.gi,G3.crossP);}}
+   else drawGrid(G3,Math.round(p*G3.g.N),false);});
+  drawScatter();}
+ el("nu_psl").addEventListener("input",()=>occ(+el("nu_psl").value/100));
+ el("nu_shuf").addEventListener("click",newRun);
+ el("nu_run25").addEventListener("click",()=>{for(let r=0;r<25;r++)LG.forEach(G3=>{const o=genOrder(G3.g.N);addPt(G3.gi,crossOf(o,G3));});drawScatter();});
  // nu slider drives (3) the collapse
  const sl=el("nu_sl");
  sl.addEventListener("input",()=>render(+sl.value/100));
  el("nu_43").addEventListener("click",()=>{sl.value=133;render(1.333);});
  el("nu_best").addEventListener("click",()=>{sl.value=Math.round(best*100);render(best);});
- refreshCross(); occ(0.45); render(2.0);
+ newRun(); render(2.0);
 })();
 </script>
 """
@@ -489,7 +518,7 @@ const G=__DATA__;
 def nu_component(demo):
     """Render the interactive correlation-length (nu) collapse toy. `demo` is build_nu_demo()'s dict
     (sizes, pgrid, pc, per-size spanning-probability R). Client-side; the nu slider rescales the axis."""
-    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=915)
+    components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=985)
 
 
 def _fig_bytes(fig):

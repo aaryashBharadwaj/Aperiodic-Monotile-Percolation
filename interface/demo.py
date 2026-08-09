@@ -213,8 +213,8 @@ def _span_onset_k(N, neigh, top, bottom, left, right, order):
     return N
 
 
-def build_nu_demo(sizes=(16, 24, 32, 48, 64), fillings=120, seed=2,
-                  live_sizes=(16, 32, 64), live_orders=6, p_lo=0.45, p_hi=0.75, p_steps=61):
+def build_nu_demo(sizes=(10, 14, 20, 28, 38, 52), fillings=120, seed=2,
+                  p_lo=0.45, p_hi=0.75, p_steps=61):
     """Data for the interactive CORRELATION-LENGTH (nu) toy: a ladder of SQUARE grids. For each size we
     run `fillings` fillings and record the occupation p = k/N at which each first spans. The spread of
     those crossing points is the finite-size transition width: small grids percolate over a FUZZY range
@@ -239,14 +239,12 @@ def build_nu_demo(sizes=(16, 24, 32, 48, 64), fillings=120, seed=2,
         R = [round(sum(1 for c in crossings if c <= p) / fillings, 4) for p in pgrid]
         mean = float(np.mean(crossings)); std = float(np.std(crossings, ddof=1))
         grids.append({"n": n, "N": N, "R": R, "mean": round(mean, 4), "std": round(std, 5)})
-    # showcase grids DRAWN live (geometry + a few random open orders to reshuffle through), so the
-    # reader sees the actual percolation the sigmoids above are counting.
+    # the SAME sizes drawn live (geometry only -- the client generates random fillings, so the reader
+    # can run it unlimited times and the crossing points they drop build the plot from the simulation).
     live = []
-    for n in live_sizes:
+    for n in sizes:
         coords, edges, N, top, bottom, left, right, bbox = _square_demo(n)
-        orders = [[int(x) for x in rng.permutation(N)] for _ in range(live_orders)]
         live.append({"n": n, "N": N, "coords": coords, "edges": edges, "bbox": bbox,
-                     "top": list(top), "bottom": list(bottom), "left": list(left), "right": list(right),
-                     "orders": orders})
+                     "top": list(top), "bottom": list(bottom), "left": list(left), "right": list(right)})
     return {"sizes": list(sizes), "pgrid": pgrid, "pc": 0.5927, "fillings": fillings,
             "grids": grids, "live": live}
