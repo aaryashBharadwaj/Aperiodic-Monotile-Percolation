@@ -213,15 +213,17 @@ def _span_onset_k(N, neigh, top, bottom, left, right, order):
     return N
 
 
-def build_nu_demo(sizes=(12, 18, 28, 42, 64), fillings=120, seed=2,
-                  p_lo=0.45, p_hi=0.75, p_steps=61):
+def build_nu_demo(sizes=(16, 24, 32, 48, 64), fillings=120, seed=2,
+                  live_sizes=(16, 32, 64), live_orders=6, p_lo=0.45, p_hi=0.75, p_steps=61):
     """Data for the interactive CORRELATION-LENGTH (nu) toy: a ladder of SQUARE grids. For each size we
     run `fillings` fillings and record the occupation p = k/N at which each first spans. The spread of
     those crossing points is the finite-size transition width: small grids percolate over a FUZZY range
-    of p, large grids SNAP. The toy plots the spanning-probability curve R(p,L) = fraction of fillings
-    spanning by p (a sigmoid that steepens with L) and reads off the width sigma_L; across the ladder
-    sigma_L ~ L^{-1/nu}, so the slope of log(width) vs log(L) gives the correlation-length exponent nu
-    (2D percolation: 4/3). Returns a JSON-friendly dict (sizes, pgrid, per-size R + mean + width)."""
+    of p, large grids SNAP. The toy (1) DRAWS a few `live_sizes` grids percolating -- drag the occupation
+    up and watch each one's largest cluster grow until it spans, reshuffle to see the crossing point
+    jitter (a lot on small grids, barely on large); (2) shows R(p,L) = fraction of fillings spanning by
+    p, the sigmoid those crossings build (steeper with L); (3) collapses the curves by rescaling with
+    L^{1/nu}. Across the ladder the width sigma_L ~ L^{-1/nu} (2D: nu = 4/3). Returns a JSON-friendly
+    dict: `grids` (R + mean + width per size) and `live` (a few grids with geometry + open orders)."""
     rng = np.random.default_rng(seed)
     pgrid = [round(p_lo + (p_hi - p_lo) * i / (p_steps - 1), 4) for i in range(p_steps)]
     grids = []
@@ -237,4 +239,14 @@ def build_nu_demo(sizes=(12, 18, 28, 42, 64), fillings=120, seed=2,
         R = [round(sum(1 for c in crossings if c <= p) / fillings, 4) for p in pgrid]
         mean = float(np.mean(crossings)); std = float(np.std(crossings, ddof=1))
         grids.append({"n": n, "N": N, "R": R, "mean": round(mean, 4), "std": round(std, 5)})
-    return {"sizes": list(sizes), "pgrid": pgrid, "pc": 0.5927, "fillings": fillings, "grids": grids}
+    # showcase grids DRAWN live (geometry + a few random open orders to reshuffle through), so the
+    # reader sees the actual percolation the sigmoids above are counting.
+    live = []
+    for n in live_sizes:
+        coords, edges, N, top, bottom, left, right, bbox = _square_demo(n)
+        orders = [[int(x) for x in rng.permutation(N)] for _ in range(live_orders)]
+        live.append({"n": n, "N": N, "coords": coords, "edges": edges, "bbox": bbox,
+                     "top": list(top), "bottom": list(bottom), "left": list(left), "right": list(right),
+                     "orders": orders})
+    return {"sizes": list(sizes), "pgrid": pgrid, "pc": 0.5927, "fillings": fillings,
+            "grids": grids, "live": live}
