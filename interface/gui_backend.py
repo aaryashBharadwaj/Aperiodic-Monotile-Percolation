@@ -9,27 +9,27 @@ and the Penrose / triangular validations).
     extrapolate_result(...)               -> p_c (I/U/A) + direction-bias check from raw trials
     plan_run(member, kind, patch, ...)    -> estimated node count + ETA from geometry, WITHOUT building
     visualise(tiling, size, ...)          -> a rendered tiling Figure (+ optional graph overlay)
-    save_result / list_saved / load_saved -> the 'Analyse saved' round-trip (results_output/)
+    save_result / list_saved / load_saved -> the 'Analyse saved' round-trip (paper_results/npz/)
 
 The percolation RUN (any tiling, incl. long/overnight, with checkpoint/resume) goes through the one
-consolidated runner percolate.py — launched detached by the GUI's Run button OR from a console
+consolidated runner runner.py — launched detached by the GUI's Run button OR from a console
 (see REPRODUCE.md). This module holds the shared kernels + analysis both use.
 """
 import os
 import math
 import numpy as np
 
-# gui_backend lives in interface/; anchor data files, results_output/ and the worker script to the
+# gui_backend lives in interface/; anchor data files, paper_results/npz/ and the worker script to the
 # REPO ROOT (one level up), not to interface/. (Package imports resolve via the repo root that the
-# entry points -- interface/gui_app.py and runner/percolate.py -- put on sys.path.)
+# entry points -- interface/gui_app.py and runner/runner.py -- put on sys.path.)
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-from builders.direct_graph_builder import (build_neighbor_graph_fast, analyze_square_frame,
-                                  largest_square_center, graph_from_polygons)
-from builders.dual_graph_builder import collect_leaf_polygons, build_dual_from_polygons, analyze_tile_square_frame
+from builders.direct_graph_builder import build_neighbor_graph_fast, largest_square_center, graph_from_polygons
+from builders.dual_graph_builder import collect_leaf_polygons, build_dual_from_polygons
+from builders.graph_core import analyze_square_frame   # the one generic frame-cutter (direct AND dual)
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
                          percolationStatsBondI_par, percolationStatsBondU_par,
-                         percolationStatsExponents_par)
+                         percolationStatsExponents_par, percolationStatsBondExponents_par)
 from engine.analysis import extrapolate_pc_raw, isotropy_test, fit_exponents
 from visualiser.run_tiling_render import _threshold_class
 from generators.family_geometry import periodic_graph, periodic_polys
@@ -37,8 +37,12 @@ from generators.periodic_tiling_generator import square_tiles, triangular_tris  
 
 S3 = math.sqrt(3)
 NU = 4.0 / 3.0                                                    # imported by visualiser.figures (fss_figure)
-RESULTS_DIR = os.path.join(REPO_ROOT, "results_output")           # the user's own runs + checkpoints (cwd-independent)
-PAPER_DIR = os.path.join(REPO_ROOT, "paper_results")              # curated canonical paper results (shipped with the GUI)
+# All results live under one folder: paper_results/npz (the .npz + job checkpoints) and
+# paper_results/figures (rendered figures). Contents are regenerated/contingent and gitignored;
+# only the folders are tracked (.gitkeep). RESULTS_DIR/PAPER_DIR are the same dir now.
+RESULTS_DIR = os.path.join(REPO_ROOT, "paper_results", "npz")     # all result .npz + checkpoints (cwd-independent)
+PAPER_DIR = RESULTS_DIR                                           # kept as an alias (single results folder)
+FIG_DIR = os.path.join(REPO_ROOT, "paper_results", "figures")    # rendered figures (run_tiling_render output)
 
 TRI = "Triangular → Honeycomb"          # the dual-of-triangular validation (exact honeycomb)
 FAMILY = "Tile(a,b) family"
@@ -74,7 +78,7 @@ PATCH_CTL = {
 
 # Visualise (render) size control -- deliberately SMALL so the figure is actually drawable/legible.
 RENDER_CTL = {
-    "Hat":     ("Inflation level", 1, 4, 3),
+    "Hat":     ("Inflation level", 1, 4, 2),
     "Spectre": ("Level",           1, 4, 3),
     "Comet":   ("Cells",           3, 14, 8),
     "Chevron": ("Cells",           3, 14, 8),
@@ -147,14 +151,13 @@ def _penrose_polys(tiling):
 
 
 # ----------------------------------------------------------------------------- graph building
-def build_graph(tiling, graph_type, patch, a=1.0, b=S3):
+def build_graph(tiling, graph_type, patch, a=1.0, b=S3, scale=None):
     """Build the requested graph and package everything the sweep needs.
     Returns a picklable bundle: {coords, neighbors, center, side, name, kind, nodes}."""
     name = resolve_member(tiling, a, b)
     if name is None:
         raise ValueError("Tile(0,0) is degenerate -- nothing to build.")
     is_dual = graph_type.startswith("Dual")
-    center_mode = "square"
     center_src = None   # if set, resolve the frame centre from these tile-vertex polygons instead of
                         # the graph nodes. For an APERIODIC dual the nodes are tile CENTROIDS, whose
                         # non-uniform density fools largest_square_center into a wrong, off-centre
@@ -166,7 +169,7 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3):
     if name in ("Hat", "Spectre"):
         patch_obj, lvl = _hat_patch(patch) if name == "Hat" else _spectre_patch(patch)
         if is_dual:
-            polys = collect_leaf_polygons(patch_obj, (patch + 1) if name == "Hat" else 10)
+            polys = collect_leaf_polygons(patch_obj, lvl)   # lvl = patch+1 (hat) or None (spectre), same as direct
             coords, neighbors, _ = build_dual_from_polygons(polys)
             center_src = polys
         else:
@@ -179,9 +182,15 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3):
             coords, neighbors, _span = periodic_graph(name.lower(), ncells=patch)
     elif name == "Penrose":
         from builders.penrose_graph_builder import build_penrose_neighbor_graph
-        coords, neighbors, _edges = build_penrose_neighbor_graph(_penrose_tiling(patch))
+        # patch = subdivisions (DENSITY); `scale` sets the physical EXTENT and MUST exceed the sweep's
+        # L_max or the frame pokes outside the patch (sizes skip). The runner passes scale = 2*L_max
+        # (the original run_penrose rule); scale=None keeps the small exploratory default.
+        coords, neighbors, _edges = build_penrose_neighbor_graph(_penrose_tiling(patch, scale=scale or 200))
         is_dual = False          # Penrose is a vertex graph
-        center_mode = "bbox"     # roughly pentagonal patch -> centre the bbox
+        # TODO(author): NEW -- Penrose now uses the shared largest_square_center like every other tiling
+        # (was center_mode="bbox"). Its sparse-cloud guard coarsens the grid for Penrose's ~1-node/cell
+        # density, returning a real inscribed square instead of the bbox min-extent that overshot the
+        # pentagon. NOTE: this shifts Penrose's window (centre + side) -> its p_c must be re-run.
     elif name == TRI:
         tris = triangular_tris(int(patch))
         if is_dual:
@@ -197,13 +206,8 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3):
     else:
         raise ValueError(f"unknown tiling {name!r}")
 
-    if center_mode == "bbox":
-        x, y = coords[:, 0], coords[:, 1]
-        cx, cy = (x.min() + x.max()) / 2.0, (y.min() + y.max()) / 2.0
-        side = min(x.max() - x.min(), y.max() - y.min())
-    else:
-        center_pts = np.concatenate(center_src, axis=0) if center_src is not None else coords
-        cx, cy, side = largest_square_center(center_pts)
+    center_pts = np.concatenate(center_src, axis=0) if center_src is not None else coords
+    cx, cy, side = largest_square_center(center_pts)
 
     return {"coords": coords, "neighbors": neighbors,
             "center": (float(cx), float(cy)), "side": float(side),
@@ -228,10 +232,10 @@ def warm_up():
 
 def _frame_data(bundle, L, bt=1.0):
     cx, cy = bundle["center"]
-    # Pick the frame analyzer by graph kind (kept out of the bundle so it stays picklable/cacheable).
-    frame = analyze_tile_square_frame if bundle["kind"] == "dual" else analyze_square_frame
-    return frame(bundle["coords"], bundle["neighbors"], L,
-                 boundary_thickness=bt, center_x=cx, center_y=cy)
+    # One generic frame-cutter for both direct and dual (a node is a vertex or a centroid; the
+    # windowing is identical). bundle["coords"]/["neighbors"] already hold the right cloud per kind.
+    return analyze_square_frame(bundle["coords"], bundle["neighbors"], L,
+                                boundary_thickness=bt, center_x=cx, center_y=cy)
 
 
 def _frame_usable(fd):
@@ -245,6 +249,17 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False):
     or pokes outside the tiling. Factored out so the GUI can drive the sweep one size per rerun --
     that's what makes it interruptible (a Stop button is processed between steps)."""
     warm_up()
+    # TODO(author): NEW -- inscribed-square cap with a 5% safety margin. bundle["side"] is the compact
+    # filled core from largest_square_center; a window past it pokes into the ragged fringe (measured
+    # off-tile AT L=side is ~0.1% hat / ~0.5% spectre via an independent point-in-polygon check, and it
+    # grows from there). Capping at 0.95*side keeps the largest window just inside the core -> ~0%
+    # clipped, uniformly across every tiling. (A node-COUNT fullness test was tried and rejected: fringe
+    # spikes keep the count high, so it accepted windows 50% past the core.) A larger window would still
+    # pass the crude per-side node guard below (fringe spikes touch each edge), so this is the real
+    # backstop for an over-large --lmax / L_max; the paper presets all sit under 0.95*side.
+    side = bundle.get("side")
+    if side is not None and L > 0.95 * side + 1e-9:
+        return {"usable": False, "L": float(L)}
     fd = _frame_data(bundle, L, bt)
     if not _frame_usable(fd):
         return {"usable": False, "L": float(L)}
@@ -261,11 +276,16 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False):
            "BI": bi.trialResults, "bond_pR": bi.pR, "bond_pD": bi.pD,
            "BU": percolationStatsBondU_par(*E, T, master_seed=seed_base + 3).trialResults}
     if exponents:
-        # OPT-IN Block-B pass (extra sweep, s_max tracked incrementally): records the per-trial
+        # OPT-IN largest-cluster pass (extra sweep, s_max tracked incrementally): records the per-trial
         # largest cluster at first-spanning (the incipient infinite cluster) -> d_f. seed_base+4
         # keeps it independent of the four threshold seeds.
         ex = percolationStatsExponents_par(*A, T, master_seed=seed_base + 4)
-        out["s_max"] = ex.s_max
+        out["s_max"] = ex.s_max        # union-onset s_max (d_f; original behaviour)
+        out["s_max_i"] = ex.s_inter    # intersection-onset s_max (the d_f onset-definition bracket)
+        # bond d_f (mass in sites): universal, so it cross-checks the site value. seed_base+5 (spare slot).
+        exb = percolationStatsBondExponents_par(*E, T, master_seed=seed_base + 5)
+        out["bond_s_max"] = exb.s_max
+        out["bond_s_max_i"] = exb.s_inter
     return out
 
 
@@ -276,7 +296,8 @@ def _pick_lmin(valid, floor=50):
 
 
 def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=None,
-                       raw_bond_pR=None, raw_bond_pD=None, raw_smax=None):
+                       raw_bond_pR=None, raw_bond_pD=None, raw_smax=None, raw_smax_inter=None,
+                       raw_bond_smax=None, raw_bond_smax_inter=None):
     """Assemble the result dict + the FULL analysis: p_c extrapolation (I/U/A); the direction-bias
     check (if pR/pD present) -- site (raw_pR/raw_pD -> 'isotropy') and bond (raw_bond_* -> 'isotropy_bond');
     and d_f (if raw_smax present -> 'exponents'). Needs >=3 sizes; fields stay None otherwise. Works on
@@ -284,8 +305,11 @@ def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=N
     out = {"L": valid, "raw_SI": rSI, "raw_SU": rSU, "raw_BI": rBI, "raw_BU": rBU,
            "skipped": skipped, "raw_pR": raw_pR, "raw_pD": raw_pD,
            "raw_bond_pR": raw_bond_pR, "raw_bond_pD": raw_bond_pD, "raw_smax": raw_smax,
+           "raw_smax_inter": raw_smax_inter,
+           "raw_bond_smax": raw_bond_smax, "raw_bond_smax_inter": raw_bond_smax_inter,
            "site": None, "bond": None, "isotropy": None, "isotropy_bond": None,
-           "exponents": None, "lmin": None}
+           "exponents": None, "exponents_inter": None,
+           "exponents_bond": None, "exponents_bond_inter": None, "lmin": None}
     if len(valid) >= 3:
         out["site"] = extrapolate_pc_raw(valid, rSI, rSU)
         if rBI and rBU and rBI[0] is not None:
@@ -304,11 +328,28 @@ def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=N
                 out["exponents"] = fit_exponents(valid, raw_smax)
             except Exception:
                 pass
+        # d_f from the intersection-onset s_max: the other end of the onset-definition bracket
+        if raw_smax_inter is not None and all(s is not None for s in raw_smax_inter):
+            try:
+                out["exponents_inter"] = fit_exponents(valid, raw_smax_inter)
+            except Exception:
+                pass
+        # bond d_f (union onset, + its intersection bracket): the site/bond universality cross-check
+        if raw_bond_smax is not None and all(s is not None for s in raw_bond_smax):
+            try:
+                out["exponents_bond"] = fit_exponents(valid, raw_bond_smax)
+            except Exception:
+                pass
+        if raw_bond_smax_inter is not None and all(s is not None for s in raw_bond_smax_inter):
+            try:
+                out["exponents_bond_inter"] = fit_exponents(valid, raw_bond_smax_inter)
+            except Exception:
+                pass
     return out
 
 
 def save_result(result, member, kind, seed, T, name=None, out_dir=RESULTS_DIR):
-    """Write a completed/partial result to results_output/ in the PercolationResults .npz format (so
+    """Write a completed/partial result to paper_results/npz/ in the PercolationResults .npz format (so
     it re-loads in this portal's 'Analyse saved' tab). pR/pD go in a companion <stem>_iso.npz
     (PercolationResults doesn't carry them) so the direction-bias check survives a reload. `name` is
     the chosen file name (sanitised); if omitted a parameter+timestamp default is used. Returns the
@@ -324,33 +365,24 @@ def save_result(result, member, kind, seed, T, name=None, out_dir=RESULTS_DIR):
         ts = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         stem = f"gui_{member.lower()}_{kind}_{ts}"
     path = os.path.join(out_dir, stem + ".npz")
+    # One file per run: the direction-bias (pR/pD) and d_f (s_union/s_inter) arrays are now folded into
+    # PercolationResults instead of separate _iso.npz / _exp.npz companions.
     PercolationResults(tiling_type=f"{member}_{kind}", seed=int(seed), trials=int(T),
                        L_values=result["L"], raw_SI=result["raw_SI"], raw_SU=result["raw_SU"],
                        raw_BI=result["raw_BI"], raw_BU=result["raw_BU"],
+                       raw_pR=result.get("raw_pR"), raw_pD=result.get("raw_pD"),
+                       raw_bond_pR=result.get("raw_bond_pR"), raw_bond_pD=result.get("raw_bond_pD"),
+                       raw_smax=result.get("raw_smax"), raw_smax_inter=result.get("raw_smax_inter"),
+                       raw_bond_smax=result.get("raw_bond_smax"),
+                       raw_bond_smax_inter=result.get("raw_bond_smax_inter"),
                        extra_meta={"source": "gui"}).save(path)
-    if result.get("raw_pR") is not None and result.get("raw_pD") is not None:
-        iso = {"L_values": np.asarray(result["L"], float)}
-        for i, (r, d) in enumerate(zip(result["raw_pR"], result["raw_pD"])):
-            iso[f"pR_{i}"] = np.asarray(r, float); iso[f"pD_{i}"] = np.asarray(d, float)
-        # bond direction-bias arrays (optional -- older runs are site-only)
-        if result.get("raw_bond_pR") is not None and result.get("raw_bond_pD") is not None:
-            for i, (r, d) in enumerate(zip(result["raw_bond_pR"], result["raw_bond_pD"])):
-                iso[f"bpR_{i}"] = np.asarray(r, float); iso[f"bpD_{i}"] = np.asarray(d, float)
-        np.savez(os.path.join(out_dir, stem + "_iso.npz"), **iso)
-    # Block-B d_f readout -> companion <stem>_exp.npz (per-L per-trial largest-cluster size s_max).
-    if result.get("raw_smax") is not None:
-        exp = {"L_values": np.asarray(result["L"], float)}
-        for i, s in enumerate(result["raw_smax"]):
-            exp[f"smax_{i}"] = np.asarray(s, float)
-        np.savez(os.path.join(out_dir, stem + "_exp.npz"), **exp)
     return path
 
 
 def list_saved(out_dir=None):
-    """Result files for 'Analyse saved': the shipped paper_results/ (canonical) listed FIRST, then
-    the user's own results_output/ runs. Excludes _iso companions and checkpoints; newest first
-    within each source; de-duplicated by name (paper_results wins). Pass out_dir to scan just one."""
-    dirs = [out_dir] if out_dir else [PAPER_DIR, RESULTS_DIR]
+    """Result files for 'Analyse saved', newest first. Excludes _iso/_exp companions and checkpoints.
+    All results live in paper_results/npz/; pass out_dir to scan a different folder."""
+    dirs = [out_dir] if out_dir else [RESULTS_DIR]
     seen = set(); out = []
     for d in dirs:
         if not d or not os.path.isdir(d):
@@ -365,30 +397,40 @@ def list_saved(out_dir=None):
 
 
 def load_saved(fname, out_dir=None):
-    """Load a saved .npz (PercolationResults + optional _iso companion) into the same result dict the
-    live runs produce, so every plot/metric works identically. Returns (result, meta). Searches
-    paper_results/ then results_output/ (or just out_dir if given)."""
+    """Load a saved .npz into the same result dict the live runs produce, so every plot/metric works
+    identically. The direction-bias and d_f arrays now live inside the file; for OLDER runs that kept
+    them in _iso.npz / _exp.npz sidecars we still read those. Returns (result, meta). Searches
+    paper_results/npz/ (or just out_dir if given)."""
     from engine.results import PercolationResults
-    dirs = [out_dir] if out_dir else [PAPER_DIR, RESULTS_DIR]
+    dirs = [out_dir] if out_dir else [RESULTS_DIR]
     base = next((d for d in dirs if d and os.path.exists(os.path.join(d, fname))), dirs[-1])
     r = PercolationResults.load(os.path.join(base, fname))
-    raw_pR = raw_pD = raw_bond_pR = raw_bond_pD = None
-    isop = os.path.join(base, fname[:-4] + "_iso.npz")
-    if os.path.exists(isop):
-        d = np.load(isop)
-        nL = len(d["L_values"])
-        raw_pR = [d[f"pR_{i}"] for i in range(nL)]
-        raw_pD = [d[f"pD_{i}"] for i in range(nL)]
-        if "bpR_0" in d:                       # bond arrays present only in newer runs
-            raw_bond_pR = [d[f"bpR_{i}"] for i in range(nL)]
-            raw_bond_pD = [d[f"bpD_{i}"] for i in range(nL)]
-    raw_smax = None
-    expp = os.path.join(base, fname[:-4] + "_exp.npz")
-    if os.path.exists(expp):                    # Block-B d_f companion (only exponent runs have it)
-        e = np.load(expp); nL = len(e["L_values"])
-        raw_smax = [e[f"smax_{i}"] for i in range(nL)]
+    raw_pR, raw_pD = r.raw_pR, r.raw_pD
+    raw_bond_pR, raw_bond_pD = r.raw_bond_pR, r.raw_bond_pD
+    raw_smax, raw_smax_inter = r.raw_smax, r.raw_smax_inter
+    raw_bond_smax, raw_bond_smax_inter = r.raw_bond_smax, r.raw_bond_smax_inter
+
+    # backward-compat: older runs stored these in sidecar files, not in the main .npz
+    if raw_pR is None:
+        isop = os.path.join(base, fname[:-4] + "_iso.npz")
+        if os.path.exists(isop):
+            d = np.load(isop); nL = len(d["L_values"])
+            raw_pR = [d[f"pR_{i}"] for i in range(nL)]; raw_pD = [d[f"pD_{i}"] for i in range(nL)]
+            if "bpR_0" in d:
+                raw_bond_pR = [d[f"bpR_{i}"] for i in range(nL)]
+                raw_bond_pD = [d[f"bpD_{i}"] for i in range(nL)]
+    if raw_smax is None:
+        expp = os.path.join(base, fname[:-4] + "_exp.npz")
+        if os.path.exists(expp):
+            e = np.load(expp); nL = len(e["L_values"])
+            raw_smax = [e[f"smax_{i}"] for i in range(nL)]
+            if "smaxI_0" in e: raw_smax_inter = [e[f"smaxI_{i}"] for i in range(nL)]
+            if "bsmax_0" in e: raw_bond_smax = [e[f"bsmax_{i}"] for i in range(nL)]
+            if "bsmaxI_0" in e: raw_bond_smax_inter = [e[f"bsmaxI_{i}"] for i in range(nL)]
+
     res = extrapolate_result(list(r.L_values), r.raw_SI, r.raw_SU, r.raw_BI, r.raw_BU, [],
-                             raw_pR, raw_pD, raw_bond_pR, raw_bond_pD, raw_smax)
+                             raw_pR, raw_pD, raw_bond_pR, raw_bond_pD,
+                             raw_smax, raw_smax_inter, raw_bond_smax, raw_bond_smax_inter)
     return res, {"member": r.tiling_type, "kind": "", "seed": r.seed, "T": r.trials,
                  "timestamp": r.timestamp}
 

@@ -8,11 +8,11 @@ Three tabs behind one tiling picker:
   * Percolate  — launch a run (any patch up to production), sweep L, finite-size-extrapolate the
                  site & bond thresholds, report p_c, check for directional bias, and optionally
                  measure the fractal dimension d_f. Runs auto-save.
-  * Analyse saved — reload any run from results_output/ (saved here or by runner/percolate.py)
+  * Analyse saved — reload any run from paper_results/npz/ (saved here or by runner/runner.py)
                  and show the identical analysis.
 
 All numerics come from the same builders/kernels the runner uses (via gui_backend); the Percolate
-tab launches runner/percolate.py in the background. Converged production numbers come from the same
+tab launches runner/runner.py in the background. Converged production numbers come from the same
 runner with a larger patch / more trials -- the 'Use paper settings' button, or the console
 (see REPRODUCE.md).
 """
@@ -71,6 +71,55 @@ def cached_scaling():
 @st.cache_data(show_spinner="Building the correlation-length grids…")
 def cached_nu():
     return build_nu_demo()
+
+
+@st.cache_data(show_spinner=False)
+def _nu_controls():
+    """Exact-nu=4/3 reference lattices (square, triangular) for the nu-vs-omega overlay; loaded once."""
+    out = []
+    for fname, lab in (("square.npz", "square (exact 4/3)"), ("triangular.npz", "triangular (exact 4/3)")):
+        try:
+            r, _ = gb.load_saved(fname)
+            out.append((lab, r))
+        except Exception:
+            pass
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def cached_collapse():
+    """Static geometry for the edge-collapse slider: the hat outline as (edge vector, class) pairs so
+    the JS can reconstruct Tile(a,b) live, plus the fixed rotation and a viewBox. 'a' edges scale with
+    a (unit-length), 'b' edges with b/√3 (√3-length); shrinking a class to 0 walks the hat to an
+    endpoint (b→0 comet, a→0 chevron)."""
+    import math
+    import generators.hat_generator as hg
+    SQ3 = math.sqrt(3)
+    pts = [(p["x"], p["y"]) for p in hg.hat_outline]
+    n = len(pts)
+    edges = []
+    for i in range(n):                                   # include the CLOSING edge (n-1 -> 0), itself a b-edge
+        dx, dy = pts[(i + 1) % n][0] - pts[i][0], pts[(i + 1) % n][1] - pts[i][1]
+        L = math.hypot(dx, dy)
+        cls = "a" if abs(L - round(L)) < 1e-6 else ("b" if abs(L / SQ3 - round(L / SQ3)) < 1e-6 else "o")
+        edges.append({"dx": dx, "dy": dy, "cls": cls})
+
+    def raw(a, b):                                       # first n-1 edges give the n vertices; the last closes
+        out = [[0.0, 0.0]]
+        for e in edges[:-1]:
+            s = a if e["cls"] == "a" else (b / SQ3 if e["cls"] == "b" else 1.0)
+            out.append([out[-1][0] + s * e["dx"], out[-1][1] + s * e["dy"]])
+        return out
+    h = raw(1.0, SQ3)
+    ang = math.degrees(math.atan2(h[1][1] - h[0][1], h[1][0] - h[0][0])) % 60.0
+    rot = -30.0 if abs(ang - 30.0) < 1e-3 else 0.0
+    c, s = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+    big = raw(SQ3, SQ3)                                       # largest reachable tile -> viewBox fits every member
+    hr = [[c * x - s * y, -(s * x + c * y)] for x, y in big]  # rotate + flip y for SVG (y down)
+    xs = [p[0] for p in hr]; ys = [p[1] for p in hr]; pad = 0.8
+    return {"edges": edges, "rot": rot, "sq3": SQ3,
+            "view": {"minx": min(xs) - pad, "miny": min(ys) - pad,
+                     "w": (max(xs) - min(xs)) + 2 * pad, "h": (max(ys) - min(ys)) + 2 * pad}}
 
 
 # Self-contained HTML/SVG+JS for the Toy demo. The slider lives INSIDE the component, so dragging it
@@ -293,11 +342,11 @@ const G=__DATA__;
   // caption by regime
   let msg;
   if(p<pc-0.03){
-   msg="<b>Below</b> the percolation point: the largest cluster is a finite blob, so its share <b>falls steeply</b> as the grid grows (the points slope down far faster than the dashed line). Not yet critical.";
+   msg="Below the percolation point: the largest cluster is a finite blob, so its share falls steeply as the grid grows (the points slope down far faster than the dashed line). Not yet critical.";
   }else if(p<=pc+0.03){
-   msg="<b>At</b> the percolation point the ten means sit on a <b>straight line</b> parallel to the 2D reference — the share is nearly the same across a 5&times; range of sizes (scale invariance). Its slope gives <b>d_f = "+df.toFixed(2)+"</b> (2D exact 91/48 = 1.90). Faint dots are the "+F+" individual fillings behind each mean — the run-to-run spread is real and never shrinks, which is exactly why one grid can't settle this and the average can.";
+   msg="At the percolation point the ten means sit on a straight line parallel to the 2D reference: the share is nearly the same across a 5&times; range of sizes (scale invariance). Its slope gives d<sub>f</sub> = "+df.toFixed(2)+" (2D exact 91/48 = 1.90). Faint dots are the "+F+" individual fillings behind each mean, so the run-to-run spread is visible and never shrinks, which is exactly why one grid can't settle this and the average can.";
   }else{
-   msg="<b>Above</b> the percolation point: the largest cluster is extensive, so its share <b>flattens</b> toward a constant (slope &rarr; 0, d_f &rarr; 2) — it fills a fixed fraction of every grid.";
+   msg="Above the percolation point: the largest cluster is extensive, so its share flattens toward a constant (slope &rarr; 0, d<sub>f</sub> &rarr; 2), filling a fixed fraction of every grid.";
   }
   el("sc_sum").innerHTML=msg;
  }
@@ -339,10 +388,10 @@ _NU_HTML = r"""
  .nubig{font-size:14.5px;min-height:2.2em;}
 </style>
 <div class="nuw">
- <div class="nustage">Drag the occupation slider — each grid percolates at its own point, <b>freezes green</b>, and drops a dot on the chart at (its size, the p where it crossed). Slide all the way up for all ten dots (slide back to re-watch), then draw the <b>ν = 4/3</b> curve: the finite-grid points climb toward the true p_c along p_c &minus; a·L<tspan>^</tspan>(&minus;1/ν).</div>
+ <div class="nustage">Drag the occupation slider, and each grid percolates at its own point, freezes green, and drops a dot on the chart at (its size, the p where it crossed). Slide all the way up for all ten dots (slide back to re-watch), then draw the ν = 4/3 curve: the finite-grid points climb toward the true p<sub>c</sub> along p<sub>c</sub> &minus; a&middot;L<sup>&minus;1/ν</sup>.</div>
  <div class="nutop">
   <div class="nuleft">
-   <div class="nucolh">ten grids percolating</div>
+   <div class="nucolh">grids freeze as they span</div>
    <div class="nurow" id="nu_grids"></div>
   </div>
   <div class="nuright">
@@ -433,7 +482,7 @@ const G=__DATA__;
  function reset(){curP=0.45;showCurve=false;
   el("nu_psl").value=450;el("nu_p").textContent="0.450";
   LG.forEach(G3=>{G3.spanned=false;drawGrid(G3,Math.round(0.45*G3.g.N),false);});drawPlot();
-  el("nu_sum").innerHTML="Slide the occupation up — a dot appears as each grid spans (and vanishes if you slide back); then draw the curve.";}
+  el("nu_sum").innerHTML="Slide the occupation up, and a dot appears as each grid spans (and vanishes if you slide back); then draw the curve.";}
  function occ(p){curP=p;el("nu_p").textContent=p.toFixed(3);
   // A grid is spanning exactly once the drawn site count reaches crossK. Colour, freeze and the dot all
   // key off that (not off p vs the rounded crossP), so the spanning shape is never shown as "not yet".
@@ -445,7 +494,7 @@ const G=__DATA__;
  el("nu_curve").addEventListener("click",()=>{
   if(LG.filter(G3=>G3.spanned).length<sizes.length){el("nu_sum").innerHTML="Slide all the way up first, so every grid has percolated.";return;}
   showCurve=true;drawPlot();
-  el("nu_sum").innerHTML="The <b>ν = 4/3</b> curve threads the dots and flattens onto p_c — each grid's shortfall p_c − p* scales as L<sup>−1/ν</sup>. <span style='color:#888'>On grids this small the fit is approximate (their true slope is a hair off 4/3); it tightens as the grids grow.</span>";});
+  el("nu_sum").innerHTML="The ν = 4/3 curve threads the dots and flattens onto p<sub>c</sub>; each grid's shortfall p<sub>c</sub> &minus; p* scales as L<sup>&minus;1/ν</sup>. <span style='color:#888'>On grids this small the fit is approximate (their true slope is a hair off 4/3); it tightens as the grids grow.</span>";});
  reset();
 })();
 </script>
@@ -456,6 +505,81 @@ def nu_component(demo):
     """Render the interactive correlation-length (nu) collapse toy. `demo` is build_nu_demo()'s dict
     (sizes, pgrid, pc, per-size spanning-probability R). Client-side; the nu slider rescales the axis."""
     components.html(_NU_HTML.replace("__DATA__", json.dumps(demo)), height=510)
+
+
+# Edge-collapse slider: reconstruct Tile(a,b) client-side from the hat's (edge, class) list. Two sliders
+# shrink the two edge-classes; at a class = 0 the hat lands on a family endpoint (comet / chevron).
+_COLLAPSE_HTML = r"""
+<style>
+ .cw{font-family:sans-serif;color:#333;max-width:440px;margin:0 auto;}
+ .csvgwrap{display:flex;justify-content:center;}
+ .cbtns{display:flex;gap:6px;justify-content:center;margin:8px 0 2px;}
+ .cbtn{padding:4px 12px;border:1px solid #ccc;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:12px;}
+ .crow{display:flex;align-items:center;gap:8px;margin:7px 4px;font-size:13px;}
+ .crow input[type=range]{flex:1;}
+ .clab{width:168px;}
+ .clsum{font-size:13.5px;margin-top:6px;text-align:center;color:#333;min-height:1.3em;}
+</style>
+<div class="cw">
+ <div class="csvgwrap"><svg id="cl_svg" width="380" height="340" style="max-width:100%;height:auto;background:#fff;border:1px solid #eee;"></svg></div>
+ <div class="cbtns">
+  <button class="cbtn" data-a="58" data-b="100">Hat</button>
+  <button class="cbtn" data-a="100" data-b="58">Turtle</button>
+  <button class="cbtn" data-a="58" data-b="58">Spectre</button>
+  <button class="cbtn" data-a="58" data-b="0">Comet</button>
+  <button class="cbtn" data-a="0" data-b="58">Chevron</button>
+ </div>
+ <div class="crow"><span class="clab">a &nbsp;<span style="color:#2e6f95">unit / blue edges</span></span><input type="range" id="cl_a" min="0" max="100" value="58"></div>
+ <div class="crow"><span class="clab">b &nbsp;<span style="color:#d1495b">&#8730;3 / red edges</span></span><input type="range" id="cl_b" min="0" max="100" value="100"></div>
+ <div class="clsum" id="cl_sum"></div>
+</div>
+<script>
+(function(){
+ const D=__DATA__, NS="http://www.w3.org/2000/svg", svg=document.getElementById("cl_svg");
+ svg.setAttribute("viewBox", D.view.minx+" "+D.view.miny+" "+D.view.w+" "+D.view.h);
+ const rot=D.rot*Math.PI/180, cr=Math.cos(rot), sr=Math.sin(rot);
+ function poly(a,b){let x=0,y=0;const P=[[0,0]];
+   for(let i=0;i<D.edges.length-1;i++){const e=D.edges[i];const s=e.cls=="a"?a:(e.cls=="b"?b/D.sq3:1.0);x+=s*e.dx;y+=s*e.dy;P.push([x,y]);}
+   return P.map(p=>[cr*p[0]-sr*p[1], -(sr*p[0]+cr*p[1])]);}
+ function col(c){return c=="a"?"#2e6f95":(c=="b"?"#d1495b":"#b0b0b0");}
+ function near(a,b,ta,tb){return Math.abs(a-ta)<0.06&&Math.abs(b-tb)<0.06;}
+ function draw(){
+   const a=+document.getElementById("cl_a").value/100*D.sq3;
+   const b=+document.getElementById("cl_b").value/100*D.sq3;
+   const P=poly(a,b);
+   while(svg.firstChild)svg.removeChild(svg.firstChild);
+   const fl=document.createElementNS(NS,"polygon");
+   fl.setAttribute("points",P.map(p=>p[0].toFixed(4)+","+p[1].toFixed(4)).join(" "));
+   fl.setAttribute("fill","#f2f2f4");svg.appendChild(fl);
+   for(let i=0;i<P.length;i++){const p=P[i],q=P[(i+1)%P.length];
+     const ln=document.createElementNS(NS,"line");
+     ln.setAttribute("x1",p[0]);ln.setAttribute("y1",p[1]);ln.setAttribute("x2",q[0]);ln.setAttribute("y2",q[1]);
+     ln.setAttribute("stroke",col(i<D.edges.length?D.edges[i].cls:"o"));
+     ln.setAttribute("stroke-width","0.14");ln.setAttribute("stroke-linecap","round");ln.setAttribute("stroke-linejoin","round");
+     svg.appendChild(ln);}
+   let nm="";
+   if(near(a,b,1,D.sq3))nm=": the hat, Tile(1,&#8730;3)";
+   else if(near(a,b,D.sq3,1))nm=": the turtle, Tile(&#8730;3,1)";
+   else if(near(a,b,1,1))nm=": the spectre, Tile(1,1)";
+   else if(b<0.04)nm=": the comet endpoint (b = 0)";
+   else if(a<0.04)nm=": the chevron endpoint (a = 0)";
+   document.getElementById("cl_sum").innerHTML="a = "+a.toFixed(2)+" , b = "+b.toFixed(2)+nm;
+ }
+ document.getElementById("cl_a").addEventListener("input",draw);
+ document.getElementById("cl_b").addEventListener("input",draw);
+ document.querySelectorAll(".cbtn").forEach(btn=>btn.addEventListener("click",()=>{
+   document.getElementById("cl_a").value=btn.dataset.a;
+   document.getElementById("cl_b").value=btn.dataset.b;draw();}));
+ draw();
+})();
+</script>
+"""
+
+
+def collapse_component(data):
+    """Render the edge-collapse slider toy. `data` is cached_collapse()'s dict (edges + rotation +
+    viewBox). Client-side: the two sliders rebuild Tile(a,b) live."""
+    components.html(_COLLAPSE_HTML.replace("__DATA__", json.dumps(data)), height=480)
 
 
 def _fig_bytes(fig):
@@ -530,12 +654,14 @@ def show_results(res, label, key_prefix, meta=None):
 
     if res.get("exponents"):
         e = res["exponents"]; lo, hi = e["d_f_ci"]; h = e["hyperscaling"]
-        st.markdown("**Fractal dimension d_f (universality class)**  \n"
-                    "Incipient spanning cluster: ⟨S_max⟩ ~ L^d_f.  "
-                    f"**d_f = {e['d_f']:.4f}**  (95% CI [{lo:.4f}, {hi:.4f}]; 2D percolation = 91/48 ≈ 1.8958)")
-        st.caption("d_f (measured) with ν (from the crossing width) fix the class; the other static "
-                   f"exponents follow by hyperscaling — τ = {h['tau']:.3f}, γ/ν = {h['gamma_nu']:.3f}, "
-                   f"β/ν = {h['beta_nu']:.4f} — and are not measured directly.")
+        st.markdown(r"**Fractal dimension $d_f$ (universality class)**  " + "\n" +
+                    r"Incipient spanning cluster: $\langle S_{\max}\rangle \sim L^{d_f}$.  " +
+                    rf"$d_f = {e['d_f']:.4f}$  (95% CI $[{lo:.4f}, {hi:.4f}]$; 2D percolation "
+                    rf"$= \tfrac{{91}}{{48}} \approx 1.8958$)")
+        st.caption(rf"$d_f$ (measured) with $\nu$ (from the crossing width) fix the class; the other "
+                   rf"static exponents follow by hyperscaling ($\tau = {h['tau']:.3f}$, "
+                   rf"$\gamma/\nu = {h['gamma_nu']:.3f}$, $\beta/\nu = {h['beta_nu']:.4f}$) and are not "
+                   rf"measured directly.")
         fdf = figs.df_figure(res)
         if fdf is not None:
             st.pyplot(fdf, width="content")
@@ -543,14 +669,30 @@ def show_results(res, label, key_prefix, meta=None):
                                file_name=f"{key_prefix}_df.png", key=f"{key_prefix}_dl_df")
         fdc = figs.df_convergence_figure(res)
         if fdc is not None:
-            st.caption("Convergence check: refit the d_f slope dropping the smallest sizes. With no "
-                       "corrections-to-scaling imposed, the effective exponent drifts to 91/48 on its "
-                       "own as finite-size (small-L) points fall away. Solid points are kept on a "
-                       "value-blind error budget (95% CI ≤ 0.02); the volatile tail (few sizes left) "
-                       "is excluded on the error, not on the value.")
+            st.caption(r"Convergence check: refit the $d_f$ slope dropping the smallest sizes. With no "
+                       r"corrections-to-scaling imposed, the effective exponent drifts to $\tfrac{91}{48}$ "
+                       r"on its own as finite-size (small-$L$) points fall away. Solid points are kept on "
+                       r"a value-blind error budget (95% CI $\leq 0.02$); the volatile tail (few sizes "
+                       r"left) is excluded on the error, not on the value.")
             st.pyplot(fdc, width="content")
             st.download_button("Download d_f convergence plot", _fig_bytes(fdc), mime="image/png",
                                file_name=f"{key_prefix}_df_convergence.png", key=f"{key_prefix}_dl_dfc")
+
+    # correlation-length exponent nu -- shown across the full correction-exponent band (omega is not
+    # measurable at these sizes), gated behind a checkbox since it bootstraps three curves.
+    if res.get("raw_SI") is not None and sum(1 for L in (res.get("L") or []) if L >= 50) >= 4:
+        st.markdown(r"**Correlation-length exponent $\nu$ (universality class)**  " + "\n" +
+                    r"$\nu$ sets how fast the finite-size crossing width shrinks, width $\sim L^{-1/\nu}$. "
+                    r"It can't be pinned without the correction-to-scaling exponent $\omega$ (not "
+                    r"measurable at these sizes), so $\nu$ is shown across the whole plausible band "
+                    r"$\omega \in [0.5, 1.5]$: it stays consistent with $\tfrac{4}{3}$ for every $\omega$, "
+                    r"and tracks the exact square/triangular lattices analysed identically.")
+        if st.checkbox("Compute ν(ω) band  (bootstraps 3 curves, a few seconds)", key=f"{key_prefix}_nucb"):
+            fnu = figs.nu_omega_figure(res, controls=_nu_controls(), B=60)
+            if fnu is not None:
+                st.pyplot(fnu, width="content")
+                st.download_button("Download ν plot", _fig_bytes(fnu), mime="image/png",
+                                   file_name=f"{key_prefix}_nu.png", key=f"{key_prefix}_dl_nu")
 
     f1 = figs.fss_figure(res)
     st.pyplot(f1, width="content")
@@ -600,7 +742,7 @@ def render_job_monitor(s):
             try:
                 res, meta = gb.load_saved(rf)
                 show_results(res, meta["member"], "job", meta=meta)
-                st.caption(f"Saved as results_output/{rf}")
+                st.caption(f"Saved as paper_results/npz/{rf}")
             except Exception as e:
                 st.error(f"Saved but could not load {rf}: {e}")
         else:
@@ -622,15 +764,10 @@ with st.sidebar:
 
     a, b = 1.0, gb.S3
     if tiling == gb.FAMILY:
-        st.markdown("Slide the two edge lengths — the tile morphs. Percolation depends only on the "
-                    "adjacency, so every generic aperiodic (a≠b) member shares the **hat's** threshold.")
-        a = st.slider("a  (short edges)", 0.0, float(gb.S3), 1.0, 0.05)
-        b = st.slider("b  (long edges)", 0.0, float(gb.S3), float(gb.S3), 0.05)
-        member = gb.resolve_member(tiling, a, b)
-        if member is None:
-            st.error("Tile(0,0) is degenerate — pick a>0 or b>0.")
-        else:
-            st.info(f"**Class:** {gb.family_member(a, b)[1]}\n\n**Runs as:** {member}")
+        member = gb.resolve_member(tiling, a, b)          # (1, √3): the hat, the family's representative
+        st.caption("Morph the tile on the Visualise tab by dragging the two edge lengths. Percolation "
+                   "depends only on the adjacency, so every generic member runs identically to the hat; "
+                   "to percolate an endpoint, pick Comet or Chevron directly.")
     else:
         member = tiling
 
@@ -668,7 +805,8 @@ tab_vis, tab_run, tab_analyse, tab_toy = st.tabs(
 
 # ============================================================ TOY DEMO (percolation walk-through)
 with tab_toy:
-    st.subheader("Toy demo")
+    # ---------------------------------------------------------- What is percolation? (the grid)
+    st.subheader("What is percolation?")
     st.markdown(
         "Percolation studies how connected a graph is. We open parts of the lattice and check whether "
         "a connected component forms that spans the entire grid. The point at which it does is sudden "
@@ -695,55 +833,70 @@ with tab_toy:
                    f"{k_inter / kmax:.2f}, estimate ≈ {est:.2f}"
                    + ("  (true: 0.5 bond, 0.5927 site)" if lattice == "square" else ""))
 
-    # --- separate scaling toy: the largest cluster above is ONE grid; run a ladder of sizes and the
-    #     fractal dimension falls out of how the largest-cluster share scales. ---
+    # universality: same class -> two exponents, nu and d_f
     st.markdown("---")
-    st.markdown("**From one blob to the scaling law.** The largest cluster above was a *single* grid. "
-                "Here are **ten** square grids of increasing size. Drag the slider (or hit **Jump to "
-                "percolation**) and watch each grid drop to a point on the plot — the share of the grid "
-                "its largest cluster fills. Below the threshold those points slope down steeply; **at** "
-                "the percolation point they line up on a straight line whose slope is the fractal "
-                "dimension d_f. The faint dots behind each mean are ten independent fillings, so you can "
-                "see the run-to-run spread the average is built from — nothing is hidden.")
-    scaling_component(cached_scaling())
+    st.markdown(
+        r"Despite having different critical points, all percolations in the same “universality class” "
+        r"act the same as they approach this threshold. This universality class can be uniquely "
+        r"determined by two constants, $\nu$ and $d_f$. These need to be $\tfrac{4}{3}$ and "
+        r"$\tfrac{91}{48}$ respectively. The following show you what these two represent.")
 
-    # --- the OTHER exponent: correlation length nu, spelled out grids -> curves -> collapse ---
-    st.markdown("---")
-    st.markdown("**The other exponent — the correlation length ν.** Watch ten grids percolate; each drops "
-                "a dot where it crosses. The dots climb toward the true threshold along a curve set by ν — "
-                "the same 4/3 as the textbook value, approached as the grids grow.")
+    # ---------------------------------------------------------- The Critical Scaling Exponent (nu)
+    st.subheader("The Critical Scaling Exponent")
+    st.markdown(
+        r"$\nu$ controls how a finite grid's crossing point closes in on the true threshold: each grid "
+        r"spans a little late, and the shortfall $p_c - p^{*}(L)$ shrinks as $L^{-1/\nu}$. Drag the "
+        r"slider, and every grid drops a dot where it first spans; the dots climb toward $p_c$ along "
+        r"that curve. Draw the $\nu = \tfrac{4}{3}$ line and it threads them.")
     nu_component(cached_nu())
+
+    # ---------------------------------------------------------- The Fractal Dimension (d_f)
+    st.subheader("The Fractal Dimension")
+    st.markdown(
+        r"At the critical point where it percolates, the large percolating cluster doesn't connect "
+        r"every single open site; instead it contains a fraction. This fraction decreases as the grid "
+        r"gets larger; the rate at which this decreases corresponds to $d_f$. Whilst it isn't exactly "
+        r"$d_f$ (it is $d_f - d$, so $d_f - 2$ for 2D percolation) it shows what it does. Drag the "
+        r"slider to the percolation point and the ten grids line up on that slope.")
+    scaling_component(cached_scaling())
 
 # ============================================================ VISUALISE engine
 with tab_vis:
     st.subheader(f"Generate — {member}")
-    left, right = st.columns([3, 1], gap="large")
-    with right:
-        if tiling == gb.FAMILY:
-            st.caption("The family preview shows a single Tile(a,b); pick a concrete member "
-                       "(comet / chevron / a≠b) to render a full patch.")
-            size = 3
-        else:
+    if tiling == gb.FAMILY:
+        # Interactive Tile(a,b) morph: reconstructs the tile live as you shrink an edge-class, so you
+        # can walk the whole family (hat / turtle / spectre) and its two collapse endpoints.
+        st.markdown(
+            r"The hat is one member of a continuous family, Tile$(a,b)$, set by its two edge lengths: "
+            r"$a$ for the unit edges (blue) and $b$ for the $\sqrt{3}$ edges (red). The other aperiodic "
+            r"monotiles live here too, the spectre is Tile$(1,1)$ and the turtle is Tile$(\sqrt{3},1)$; "
+            r"shrink an edge-class to zero and you reach an endpoint, $b \to 0$ the comet and $a \to 0$ "
+            r"the chevron. Drag the sliders or hit a preset to morph the tile. The sidebar $a$/$b$ "
+            r"sliders pick which concrete member the other tabs render and percolate.")
+        collapse_component(cached_collapse())
+    else:
+        left, right = st.columns([3, 1], gap="large")
+        with right:
             rlabel, rlo, rhi, rdflt = gb.RENDER_CTL[member]
             size = st.slider(rlabel, rlo, rhi, rdflt, key="vis_size",
-                             help="Render size only — kept small so the figure stays legible. "
+                             help="Render size only, kept small so the figure stays legible. "
                                   "The percolation patch (other tab) can be much larger.")
-        st.caption("The visualisation is generated using the same code as the percolation engine. It is "
-                   "thus used to verify that the transform used for this algorithm is indeed correct. "
-                   "Any mistakes in substitutes show as gaps or discrepancies in the tiling.")
-    with left:
-        try:
-            fig, ntiles, gcounts = cached_visualise(tiling, size, round(a, 3), round(b, 3),
-                                                    graph_type, show_graph)
-            st.pyplot(fig, width="content")
-            cap = f"{ntiles:,} tiles"
-            if gcounts:
-                cap += f"  ·  graph: {gcounts[0]:,} nodes, {gcounts[1]:,} edges"
-            st.caption(cap)
-            st.download_button("Download image", _fig_bytes(fig), mime="image/png",
-                               file_name=f"{member}_tiling.png", key="vis_dl")
-        except Exception as e:
-            st.warning(f"render unavailable: {e}")
+            st.caption("The visualisation is generated using the same code as the percolation engine. It "
+                       "is thus used to verify that the transform used for this algorithm is indeed "
+                       "correct. Any mistakes in substitutes show as gaps or discrepancies in the tiling.")
+        with left:
+            try:
+                fig, ntiles, gcounts = cached_visualise(tiling, size, round(a, 3), round(b, 3),
+                                                        graph_type, show_graph)
+                st.pyplot(fig, width="content")
+                cap = f"{ntiles:,} tiles"
+                if gcounts:
+                    cap += f"  ·  graph: {gcounts[0]:,} nodes, {gcounts[1]:,} edges"
+                st.caption(cap)
+                st.download_button("Download image", _fig_bytes(fig), mime="image/png",
+                                   file_name=f"{member}_tiling.png", key="vis_dl")
+            except Exception as e:
+                st.warning(f"render unavailable: {e}")
 
 # ============================================================ PERCOLATE engine
 with tab_run:
@@ -884,7 +1037,7 @@ with tab_run:
     _busy = bool(_s and _s.get("status") in ("launching", "building", "running", "finalising"))
 
     want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
-                           help="Block-B pass: records the incipient-cluster size per trial -> the "
+                           help="Largest-cluster pass: records the incipient-cluster size per trial -> the "
                                 "fractal dimension d_f (<s_max> ~ L^d_f), one of the two exponents that "
                                 "fix the universality class. Off by default to keep runs fast; the "
                                 "paper's universality runs turn it on.")
@@ -895,7 +1048,7 @@ with tab_run:
         st.rerun()
     if not _busy:
         st.caption("Launches a background process — it keeps running if you close the tab or the "
-                   "machine sleeps. Result auto-saves to results_output/ when done.")
+                   "machine sleeps. Result auto-saves to paper_results/npz/ when done.")
 
     # The exact console command for the current settings — the Run button just launches this. Handy
     # for a headless box, a machine you won't keep the browser open on, or scripting a batch.
@@ -908,10 +1061,10 @@ with tab_run:
                    f"--trials {int(T)}", f"--seed {int(seed)}"]
         if want_exp:
             _parts.append("--exponents")
-        st.code("python runner/percolate.py " + " ".join(_parts), language="bash")
+        st.code("python runner/runner.py " + " ".join(_parts), language="bash")
         st.caption("Same computation as the button (identical kernels, seed and results). Run it "
                    "from the project folder. It checkpoints and resumes if interrupted, and saves "
-                   "to results_output/ — so it also shows up under 'Analyse saved' and in the "
+                   "to paper_results/npz/ — so it also shows up under 'Analyse saved' and in the "
                    "background-jobs list above.")
 
     # Other jobs (finished, or running from another session) — reattach or clean up. Rendered BEFORE
@@ -940,12 +1093,12 @@ with tab_run:
 # ============================================================ ANALYSE SAVED
 with tab_analyse:
     st.subheader("Analyse a saved run")
-    st.caption("Loads saved runs from the results_output/ folder and re-derives every result "
+    st.caption("Loads saved runs from the paper_results/npz/ folder and re-derives every result "
                "from the raw per-trial data.")
     saved = gb.list_saved()
     if not saved:
-        st.info("No saved runs found in results_output/. Run something on the Percolate tab, or "
-                "run runner/percolate.py from a console (see REPRODUCE.md).")
+        st.info("No saved runs found in paper_results/npz/. Run something on the Percolate tab, or "
+                "run runner/runner.py from a console (see REPRODUCE.md).")
     else:
         pick = st.selectbox("Saved run", saved, key="analyse_pick")
         try:
@@ -958,7 +1111,7 @@ with tab_analyse:
 # ============================================================ background-job poll (MUST be last)
 # The Percolate tab's job monitor asks to auto-refresh by setting _poll_monitor. We do the actual
 # sleep+rerun HERE, after every tab has rendered -- so a running job never pre-empts the later tabs
-# (Analyse saved / Toy demo) from drawing. (A GUI Run, or any console `percolate.py` writing to the
+# (Analyse saved / Toy demo) from drawing. (A GUI Run, or any console `runner.py` writing to the
 # shared jobs/ dir, triggers this via auto-reattach.)
 if st.session_state.pop("_poll_monitor", False):
     time.sleep(2)

@@ -1,9 +1,9 @@
-"""Background-job plumbing for the percolation GUI. A GUI run launches percolate.py as a DETACHED OS
+"""Background-job plumbing for the percolation GUI. A GUI run launches runner.py as a DETACHED OS
 process that reuses the exact kernels in gui_backend (build_graph + run_one), checkpoints after every
 L, and writes a small JSON status file. Split out of gui_backend so the job/status/launch machinery
-lives on its own; both the GUI and the worker (runner/percolate.py) use it.
+lives on its own; both the GUI and the worker (runner/runner.py) use it.
 
-    launch_job(...)          -> spawn percolate.py detached, return its job id
+    launch_job(...)          -> spawn runner.py detached, return its job id
     make_job_id / job_paths  -> deterministic id + on-disk paths (status/ckpt/log/stop)
     write_status / read_job_status / list_jobs / stop_job / clear_job
 
@@ -22,7 +22,7 @@ from interface.gui_backend import REPO_ROOT, RESULTS_DIR
 
 
 # ============================================================ BACKGROUND JOBS
-# A GUI run launches percolate.py as a DETACHED OS process that reuses the exact kernels here
+# A GUI run launches runner.py as a DETACHED OS process that reuses the exact kernels here
 # (build_graph + run_one), checkpoints after every L, and writes a small JSON status file. Because
 # it's a real process (not the browser rerun-loop), it survives the tab closing, the machine
 # sleeping (OS suspend/resume), and even the Streamlit server dying; a full restart/crash resumes
@@ -109,7 +109,7 @@ def stop_job(jid):
 
 def clear_job(jid):
     """Forget a finished job (remove its status/checkpoint/log/flag). The final result npz in
-    results_output/ is NOT touched."""
+    paper_results/npz/ is NOT touched."""
     for k, p in job_paths(jid).items():
         for cand in (p, p + ".tmp"):
             try:
@@ -120,9 +120,9 @@ def clear_job(jid):
 
 def launch_job(tiling, member, graph_type, kind, patch, a, b, Lmin, Lmax, gap, T, seed, name=None,
                exponents=False):
-    """Spawn percolate.py detached and return its job id. Reuses an existing checkpoint (same
+    """Spawn runner.py detached and return its job id. Reuses an existing checkpoint (same
     params) automatically. The process outlives this Streamlit server. exponents=True adds the
-    Block-B d_f pass (--exponents)."""
+    largest-cluster d_f pass (--exponents)."""
     jd = _jobs_dir()
     jid = make_job_id(member, kind, patch, a, b, Lmin, Lmax, gap, T, seed)
     # Clear any stale stop flag from a previous run of this id.
@@ -130,7 +130,7 @@ def launch_job(tiling, member, graph_type, kind, patch, a, b, Lmin, Lmax, gap, T
         os.remove(job_paths(jid)["stop"])
     except OSError:
         pass
-    worker = os.path.join(REPO_ROOT, "runner", "percolate.py")
+    worker = os.path.join(REPO_ROOT, "runner", "runner.py")
     argv = [sys.executable, worker, "--job-id", jid, "--tiling", tiling, "--member", member,
             "--graph", graph_type, "--kind", kind, "--patch", str(patch), "--a", str(a),
             "--b", str(b), "--lmin", str(Lmin), "--lmax", str(Lmax), "--gap", str(gap),

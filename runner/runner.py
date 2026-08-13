@@ -1,27 +1,20 @@
-"""Consolidated percolation runner — one command runs ANY tiling.
-
-This is both (a) the engine the GUI's Run button launches as a detached background process, and
-(b) a standalone console runner you can copy-paste. It reuses the EXACT kernels the GUI uses
-(gui_backend.build_graph + run_one), so results are identical whichever way you launch it. After
-every L it writes a checkpoint (.npz) and a status JSON; a re-launch with the same parameters
-RESUMES from the checkpoint. On completion it extrapolates and saves the result to results_output/.
-
-Console examples (run from the repo root; member/kind auto-derived; graph takes 'direct'/'dual'):
-  python runner/percolate.py --tiling Hat     --graph direct --patch 6  --lmin 10 --lmax 1000 --gap 10 --trials 1000 --seed 123456789
-  python runner/percolate.py --tiling Spectre --graph dual   --patch 6  --lmin 20 --lmax 560  --gap 20 --trials 500  --seed 123456789
-  python runner/percolate.py --tiling Square  --graph direct --patch 300 --lmin 50 --lmax 400 --gap 25 --trials 40000 --seed 123456789
-  python runner/percolate.py --tiling "Tile(a,b) family" --graph direct --a 1 --b 1.732 --patch 6 --lmin 10 --lmax 200 --gap 20 --trials 500 --seed 1
-
---tiling is one of: Hat, Spectre, Comet, Chevron, Square, Penrose, "Triangular -> Honeycomb",
-"Tile(a,b) family".  --patch is the inflation level (hat/spectre), subdivisions (penrose), or cell
-count (periodic).  Interrupt and re-run the same command to resume.
-"""
 import argparse
 import os
 import sys
 import time
 
 import numpy as np
+
+# One runner for every tiling
+# Same kernels the GUI uses, so results match either way. 
+# Checkpoints after every L -- re-run the same command to resume.
+# --patch means inflation level (hat/spectre), subdivisions (penrose), or cell count (periodic).
+
+# Sample Inputs: 
+
+#   python runner/runner.py --tiling Hat --graph direct --patch 6 --lmin 10 --lmax 1000 --gap 10 --trials 1000 --seed 123456789
+#   python runner/runner.py --tiling Spectre --graph dual --patch 6 --lmin 20 --lmax 560 --gap 20 --trials 500 --seed 123456789
+#   python runner/runner.py --tiling Penrose --graph direct --patch 9 --lmin 20 --lmax 200 --gap 20 --trials 1000 --seed 123456789
 
 _GRAPH = {"direct": "Direct (vertex)", "vertex": "Direct (vertex)",
           "dual": "Dual (tile)", "tile": "Dual (tile)"}
@@ -48,15 +41,15 @@ def main():
     ap.add_argument("--member", default=None, help="override the auto-derived member name")
     ap.add_argument("--kind", default=None, help="override the auto-derived direct/dual")
     ap.add_argument("--job-id", default=None, help="override the auto id (the GUI sets this to monitor)")
-    ap.add_argument("--out-dir", default=None, help="where the result .npz is saved (default results_output/)")
+    ap.add_argument("--out-dir", default=None, help="where the result .npz is saved (default paper_results/npz/)")
     ap.add_argument("--jobs-dir", default=None, help="(accepted for GUI compatibility; unused)")
     ap.add_argument("--name", default="", help="output file name (default auto from parameters)")
     ap.add_argument("--exponents", action="store_true",
-                    help="also run the Block-B cluster pass (records s_max/chi/histogram -> d_f, "
+                    help="also run the largest-cluster pass (records s_max/chi/histogram -> d_f, "
                          "gamma/nu, tau). Adds an extra sweep + O(N) snapshot per size (~+30%% time).")
     args = ap.parse_args()
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # percolate is in runner/
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # runner.py is in runner/
     sys.path.insert(0, repo_root)                                             # so the packages import
     import interface.gui_backend as gb
     import runner.jobs as jobs
@@ -67,7 +60,7 @@ def main():
     a, b = round(args.a, 3), round(args.b, 3)
     patch = int(round(args.patch))
     member = args.member or gb.resolve_member(args.tiling, a, b)
-    out_dir = args.out_dir or os.path.join(repo_root, "results_output")
+    out_dir = args.out_dir or gb.RESULTS_DIR
     bt = args.bt if args.bt is not None else gb.default_bt(member)
     jid = args.job_id or jobs.make_job_id(member, kind, patch, a, b, args.lmin, args.lmax,
                                         args.gap, int(args.trials), int(args.seed))
@@ -94,8 +87,9 @@ def main():
             "result_file": result_file, "error": error, "name": args.name})
 
     # Accumulators (+ resume from a matching checkpoint if one exists).
-    # rPR/rPD site direction-bias crossings; rBPR/rBPD bond; rSM the Block-B largest-cluster sizes (d_f).
-    valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, skipped = ([] for _ in range(11))
+    # rPR/rPD site direction-bias crossings; rBPR/rBPD bond; rSM the largest-cluster sizes (d_f).
+    valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, rSMi, rBSM, rBSMi, skipped = \
+        ([] for _ in range(14))
     start_i = 0
     if os.path.exists(ckpt):
         try:
@@ -108,18 +102,27 @@ def main():
             rBPR = [row for row in z["BPR"]]; rBPD = [row for row in z["BPD"]]
             if "SM" in z and z["SM"].size:
                 rSM = [row for row in z["SM"]]
+            if "SMI" in z and z["SMI"].size:
+                rSMi = [row for row in z["SMI"]]
+            if "BSM" in z and z["BSM"].size:
+                rBSM = [row for row in z["BSM"]]
+            if "BSMI" in z and z["BSMI"].size:
+                rBSMi = [row for row in z["BSMI"]]
             skipped = [float(x) for x in z["skipped"]]
             print(f"  resuming from checkpoint at size {start_i}/{total}", flush=True)
         except Exception:
             start_i = 0  # unreadable/old-format checkpoint -> start clean
-            valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, skipped = ([] for _ in range(11))
+            valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, rSMi, rBSM, rBSMi, skipped = \
+                ([] for _ in range(14))
 
     def save_ckpt(next_i):
         np.savez(ckpt_tmp,
                  Lvals=np.array(valid, float), SI=np.array(rSI, float), SU=np.array(rSU, float),
                  BI=np.array(rBI, float), BU=np.array(rBU, float), PR=np.array(rPR, float),
                  PD=np.array(rPD, float), BPR=np.array(rBPR, float), BPD=np.array(rBPD, float),
-                 SM=np.array(rSM, float), skipped=np.array(skipped, float), next_i=next_i)
+                 SM=np.array(rSM, float), SMI=np.array(rSMi, float),
+                 BSM=np.array(rBSM, float), BSMI=np.array(rBSMi, float),
+                 skipped=np.array(skipped, float), next_i=next_i)
         jobs._safe_replace(ckpt_tmp, ckpt)
 
     try:
@@ -130,7 +133,19 @@ def main():
 
         status("building", start_i, last_line="building graph...")
         print("  building graph...", flush=True)
-        bundle = gb.build_graph(args.tiling, graph, patch, a, b)
+        # Penrose: --patch is subdivisions (density), so the physical extent comes from `scale`, which
+        # must exceed L_max. Reproduce the original run_penrose rule scale = 2*L_max so the patch is big
+        # enough for the whole sweep (else large-L frames fall outside the patch and skip).
+        pscale = int(2 * args.lmax) if member == "Penrose" else None
+        bundle = gb.build_graph(args.tiling, graph, patch, a, b, scale=pscale)
+        # run_one caps windows at 0.95*side (side = inscribed square from largest_square_center, minus a
+        # 5% margin so the largest window sits just inside the tiling). Warn a console user whose --lmax
+        # overshoots that cap, so a capped sweep isn't a silent surprise (the paper presets sit under it).
+        _side = bundle.get("side")
+        if _side is not None and args.lmax > 0.95 * _side + 1e-9:
+            print(f"  note: --lmax {args.lmax:g} exceeds the safe window cap {0.95 * _side:.0f} "
+                  f"(0.95 x inscribed square) for this patch; larger sizes clip the fringe and will be "
+                  f"skipped.", flush=True)
 
         last_i = start_i
         stopped = False
@@ -150,7 +165,8 @@ def main():
                 rPR.append(step["pR"]); rPD.append(step["pD"])
                 rBPR.append(step["bond_pR"]); rBPD.append(step["bond_pD"])
                 if args.exponents:
-                    rSM.append(step["s_max"])
+                    rSM.append(step["s_max"]); rSMi.append(step.get("s_max_i"))
+                    rBSM.append(step.get("bond_s_max")); rBSMi.append(step.get("bond_s_max_i"))
                 ms = sum(step["SI"]) / len(step["SI"]); mb = sum(step["BI"]) / len(step["BI"])
                 line = f"size {i+1}/{total}  L={L:.0f}  N={step['N']:,}  site={ms:.3f}  bond={mb:.3f}"
             else:
@@ -164,7 +180,10 @@ def main():
         # Finalise: extrapolate (prints the p_c + direction-bias summary to stdout) + SAVE.
         print("\n" + "=" * 60 + f"\n{member} / {kind} extrapolation\n" + "=" * 60, flush=True)
         res = gb.extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, rPR, rPD, rBPR, rBPD,
-                                    rSM if args.exponents else None)
+                                    rSM if args.exponents else None,
+                                    rSMi if args.exponents else None,
+                                    rBSM if args.exponents else None,
+                                    rBSMi if args.exponents else None)
         result_file = None
         if valid:
             default_name = args.name or (

@@ -85,7 +85,8 @@ def intersect(p1, q1, p2, q2):
 
 # This is your basic hat tile unit geometry
 hat_outline = [
-    hexPt(0, 0), hexPt(-1,-1), hexPt(0,-2), hexPt(2,-2),
+    # we add hexPt(1,-2) making it a 14-gon not 13, this is more principled for percolation
+    hexPt(0, 0), hexPt(-1,-1), hexPt(0,-2), hexPt(1,-2), hexPt(2,-2),
     hexPt(2,-1), hexPt(4,-2), hexPt(5,-1), hexPt(4, 0),
     hexPt(3, 0), hexPt(2, 2), hexPt(0, 3), hexPt(0, 2),
     hexPt(-1, 2)]
@@ -134,9 +135,10 @@ def H_init():
         pt(2.5, 5 * sqrt3/2), pt(1.5, 5 * sqrt3/2), pt(-0.5, sqrt3/2)
     ]
     meta = MetaTile(H_outline, 2)
-    meta.addChild(matchTwo(hat_outline[5], hat_outline[7], H_outline[5], H_outline[0]), H_hat)
-    meta.addChild(matchTwo(hat_outline[9], hat_outline[11], H_outline[1], H_outline[2]), H_hat)
-    meta.addChild(matchTwo(hat_outline[5], hat_outline[7], H_outline[3], H_outline[4]), H_hat)
+    # every outline moves up from the original paper to account for the 14
+    meta.addChild(matchTwo(hat_outline[6], hat_outline[8], H_outline[5], H_outline[0]), H_hat)
+    meta.addChild(matchTwo(hat_outline[10], hat_outline[12], H_outline[1], H_outline[2]), H_hat)
+    meta.addChild(matchTwo(hat_outline[6], hat_outline[8], H_outline[3], H_outline[4]), H_hat)
     meta.addChild(mul(ttrans(2.5, sqrt3/2), mul([-0.5,-sqrt3/2,0,sqrt3/2,-0.5,0], [0.5,0,0,0,-0.5,0])), H1_hat)
     return meta
 def T_init():

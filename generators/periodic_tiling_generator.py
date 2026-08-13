@@ -8,7 +8,7 @@ S3 = math.sqrt(3)
 # Polygon generators: an n x n block of unit tiles, returned as polygons so the caller can feed them
 # through the SHARED graph builders (direct_graph_builder.graph_from_polygons /
 # dual_graph_builder.build_dual_from_polygons) -- exactly the path the aperiodic tilings take. The
-# GUI/percolate use these so square/triangular percolation exercises the same builders as the
+# GUI/runner use these so square/triangular percolation exercises the same builders as the
 # hat/spectre, rather than any bespoke lattice code.
 def square_tiles(n):
     """n x n block of unit squares. Perimeter graph = the square lattice (site pc 0.5927); the

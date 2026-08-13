@@ -1,16 +1,8 @@
-"""Results analysis for the percolation engine: finite-size-scaling fits that turn the raw per-L
-trial arrays (produced by engine.percolation's *_par classes) into physical numbers.
-
-Kept separate from engine.percolation so that module is PURE SIMULATION (Newman-Ziff kernels +
-trial classes) and this one is PURE ANALYSIS (weighted least squares, p_c extrapolation, the
-direction-bias check). A runner/backend imports the simulation from percolation and the fits here.
-
-  _wls_fit(...)            -> weighted straight-line fit (the shared FSS primitive)
-  extrapolate_pc_raw(...)  -> p_c (I/U/A estimators) from the crossing trials, nu fixed at 4/3
-  isotropy_test(...)       -> direction-bias check that validates the averaged p_A estimator
-"""
 import numpy as np
 from scipy import stats
+
+# results analysis for the percolation
+# kept seperate from the actual engine
 
 
 # wls is 'weighted least squares'
@@ -97,11 +89,9 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
     return results
 
 # Direction-bias check that validates the estimator, NOT a universality claim.
-# We measure p_c by crossing a SQUARE window, and "left-right" vs "top-bottom" (and the square
-# aspect ratio) are arbitrary conventions. If P(LR) != P(TB) the reported threshold would depend
-# on that arbitrary choice, and the direction-averaged estimator p_A would be blending two
-# different quantities. Testing p_R - p_D -> 0 confirms the choice does not bias p_c. (This is a
-# statement about the measurement we ran, not about the geometry/universality of the tiling.)
+# We measure p_c by crossing a SQUARE window, and "left-right" vs "top-bottom" (and the square aspect ratio) are arbitrary conventions. 
+# If P(LR) != P(TB) the reported threshold would depend on that arbitrary choice, and the direction-averaged estimator p_A would be blending two different quantities 
+# Testing p_R - p_D -> 0 confirms the choice does not bias p_c
 def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
     # p_R (horizontal) and p_D (vertical) crossing fractions are recorded in the same sweep
     # (paired). We extrapolate their difference to L -> infinity; consistency with zero means
@@ -111,35 +101,99 @@ def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
     pR = [np.asarray(r, dtype=float) for r in pR]
     pD = [np.asarray(r, dtype=float) for r in pD]
     if L_min is not None:
+        # keep filters small L's to avoid finite size effects
         keep = L >= L_min
         L = L[keep]
         pR = [r for r, k in zip(pR, keep) if k]
         pD = [r for r, k in zip(pD, keep) if k]
     n = len(L)
     x = L ** (-1.0 / nu)
+    # subtract the differences between rightwards and downwards
+    # doesn't subtract means because each trial shares it's random generation, so this is less noisy
     d_mean = np.array([(rR - rD).mean() for rR, rD in zip(pR, pD)])
     d_se   = np.array([(rR - rD).std(ddof=1) / np.sqrt(len(rR)) for rR, rD in zip(pR, pD)])
+    # Identical machinery to extrapolate_pc_raw
+    # The discarded return values are the slope and the standard errors, which aren't needed
     d_inf, _, _, _, d_ci = _wls_fit(x, d_mean, d_se, n, confidence)
+    # Does the confidence interval straddle zero? If yes, the extrapolated difference is consistent with zero
+    # If the interval sits entirely above or below zero, the two directions genuinely differ and p_A would be blending two different things
     unbiased = d_ci[0] <= 0.0 <= d_ci[1]
     print(f"[Direction bias] p_R - p_D (L->inf) = {d_inf:+.6f}   {int(confidence*100)}% CI "
           f"[{d_ci[0]:+.6f}, {d_ci[1]:+.6f}]  ->  {'no directional bias' if unbiased else 'DIRECTION-BIASED'}")
     return d_inf, d_ci, unbiased
 
 
-# ---- Block B: the fractal dimension d_f from the incipient-infinite-cluster size ----
+# ---- Largest-cluster pass: the fractal dimension d_f from the incipient-infinite-cluster size ----
 def fit_exponents(L_list, smax, B=200, seed=17):
-    """d_f from <s_max> ~ L^{d_f} (largest cluster at first-spanning), with a bootstrap-over-trials CI.
-    The other static exponents are NOT measured -- they follow from d_f by hyperscaling (tau = 1 + d/d_f,
-    gamma/nu = 2 d_f - d, beta/nu = d - d_f) and are returned as those consequences. (Direct cluster-
-    moment estimators of gamma/nu and tau are open-boundary biased, so we deliberately don't record
-    or fit them; d_f + nu are the two independent exponents that fix the class.)"""
     rng = np.random.default_rng(seed)
     L = np.asarray(L_list, float); logL = np.log(L)
+    # smax is a list of 'largest clusters' for each trial of a given L
+    # we average this to get an average largest cluster per L
     smax = [np.asarray(s, float) for s in smax]
     slope = lambda means: float(np.polyfit(logL, np.log(means), 1)[0])
     d_f = slope([s.mean() for s in smax])
+    # run a bootstrap for every L because the data is skewed
+    # So we randomly select a number of clusters equal to the number of trials, with repetition
+    # We use this to approximate the distribution and pick the 95% interval to get a distribution
     boot = [slope([s[rng.integers(0, len(s), len(s))].mean() for s in smax]) for _ in range(B)]
     ci = (float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5)))
+    # d is the spatial dimension, this is 2D
     d = 2.0
+    # return the other universality constants derived by the ones we have
+    # direct estimators for γ/ν and τ are biased by open boundaries, so measuring them would give worse numbers than deriving them
     return {"d_f": d_f, "d_f_ci": ci,
             "hyperscaling": {"tau": 1 + d / d_f, "gamma_nu": 2 * d_f - d, "beta_nu": d - d_f}}
+
+
+# ---- correlation-length exponent nu from the transition width (omega is an INPUT, not a fit) ----
+def _width_nu(L, widths, sigmas, omega):
+    """The nu minimising the summed weighted residual of  std(onset) = A L^{-1/nu} (1 + B L^{-omega})
+    across one or more channels, with omega held fixed and the amplitudes (A, A*B) profiled out linearly
+    per channel. Several channels (site/bond, I/U) share nu and omega but keep independent amplitudes,
+    which is what tightens nu."""
+    from scipy.optimize import minimize_scalar
+    def chi2(nu):
+        tot = 0.0
+        for w, sig in zip(widths, sigmas):
+            M = np.column_stack([L ** (-1.0 / nu), L ** (-1.0 / nu - omega)]); Wt = 1.0 / sig ** 2
+            try:
+                c = np.linalg.solve((M * Wt[:, None]).T @ M, (M * Wt[:, None]).T @ w)
+            except np.linalg.LinAlgError:
+                return 1e18
+            tot += float(np.sum(Wt * (w - M @ c) ** 2))
+        return tot
+    return float(minimize_scalar(chi2, bounds=(1.10, 1.60), method="bounded").x)
+
+
+def fit_nu(L_list, channels, omega_lo=0.5, omega_hi=1.5, n_omega=13, B=200, seed=17, L_min=50.0):
+    """nu from the finite-size transition width, std(onset) ~ L^{-1/nu}. The correction-to-scaling
+    exponent omega is NOT measurable at accessible sizes -- the joint (nu, omega) fit is degenerate and
+    the direct omega observables are swamped by noise (needs Ziff-scale statistics) -- so we do NOT fit
+    it. Instead nu is extracted for every omega across the band [omega_lo, omega_hi] (the range of
+    correction exponents reported across 2D percolation systems) and the resulting BAND is the result:
+    the point is that nu stays consistent with 4/3 for the whole band, so the conclusion does not depend
+    on omega. `channels` is a list of per-L onset-array lists (e.g. site-I/U and bond-I/U) that share nu
+    and omega but have independent amplitudes -- a joint fit. Returns the nu band + bootstrap CIs at the
+    band ends. Validate by running it on exact-nu=4/3 lattices (square/triangular): the same procedure
+    must return ~4/3 there. L_min drops the smallest sizes (biggest corrections); default 50 matches the
+    p_c-extrapolation cutoff."""
+    L_all = np.asarray(L_list, float)
+    keep = L_all >= L_min
+    L = L_all[keep]
+    ch_arrs = [[np.asarray(a, float) for a, k in zip(ch, keep) if k] for ch in channels]
+    Ts = [len(ch[0]) for ch in ch_arrs]
+    widths = [np.array([a.std(ddof=1) for a in ch]) for ch in ch_arrs]
+    sigmas = [w / np.sqrt(2.0 * (T - 1)) for w, T in zip(widths, Ts)]
+    omegas = np.linspace(omega_lo, omega_hi, n_omega)
+    nu_by_omega = {round(float(om), 4): _width_nu(L, widths, sigmas, om) for om in omegas}
+    vals = np.array(list(nu_by_omega.values()))
+    rng = np.random.default_rng(seed)
+    def boot_ci(om):
+        out = [_width_nu(L, [np.array([a[rng.integers(0, len(a), len(a))].std(ddof=1) for a in ch])
+                             for ch in ch_arrs], sigmas, om) for _ in range(B)]
+        return (float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5)))
+    return {"nu_band": (float(vals.min()), float(vals.max())),
+            "omega_band": (omega_lo, omega_hi),
+            "nu_by_omega": nu_by_omega,
+            "nu_at_omega_lo": nu_by_omega[round(float(omegas[0]), 4)], "ci_at_omega_lo": boot_ci(omega_lo),
+            "nu_at_omega_hi": nu_by_omega[round(float(omegas[-1]), 4)], "ci_at_omega_hi": boot_ci(omega_hi)}

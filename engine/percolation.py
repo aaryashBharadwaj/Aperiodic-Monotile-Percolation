@@ -1,28 +1,14 @@
-"""The percolation engine (Newman-Ziff incremental union-find, weighted quick-union with
-path halving). The per-trial sweep is numba-JIT-compiled and the graph invariants (CSR
-neighbours, boundary masks) are built once per size, not per trial.
-
-Trials run in parallel: the percolationStats*_par classes run the nogil kernel across a thread
-pool and draw an independent SeedSequence stream per trial, so a run is reproducible from its
-master_seed (though NOT bit-identical to a single serial random.shuffle stream). Every runner —
-the production hat/spectre ones and the periodic/comparison ones — uses these classes.
-
-The results-analysis functions (WLS fit, p_c extrapolation, direction-bias check) live in the
-sibling module engine/analysis.py; this module is kept pure simulation.
-
-(A pure-Python reference implementation of the engine, and a serial numba twin of these classes,
-were kept during development for bit-identity checks; they now live on the `author-review` git
-branch.)"""
 import numpy as np
 from numba import njit
-from builders.direct_graph_builder import neighbors_to_csr
+from builders.graph_core import neighbors_to_csr
 
+# this file holds the main global percolation engine for all inputs
+# It uses a Monte-Carlo Newman-Ziff algorithm
+# Extrapolation and reading is handled by analysis.py
 
+# runs the window sizes
+# It recomputes each number so a floating point doesn't accumulate
 def l_sweep(lmin, lmax, gap):
-    """The window sizes L for a sweep: count-based (int number of steps, then L_min + k*gap) so it
-    never drifts by a float epsilon. The SINGLE definition of the sweep -- the GUI preview/ETA and
-    the runner both call this, so the estimate and the actual run use IDENTICAL L (which change the
-    result). Returns [] for an empty/invalid range."""
     if lmax <= lmin or gap <= 0:
         return []
     n = int((lmax - lmin) / gap + 1e-9) + 1
@@ -55,8 +41,6 @@ def _union(parent, size, a, b):
 # The virtual node is connected to every node on a particular border
 # If the two virtual nodes are in the same component it means the cluster goes from border to border
 # This is why we use (N+2)
-
-
 @njit(cache=True, nogil=True)
 def _site_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, N, intersection):
     # start each node as it's own parent
@@ -109,7 +93,7 @@ def _site_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, N, inter
     return N, tb_onset, lr_onset
 
 
-# ┌This is the bond percolation version
+# This is the bond percolation version
 @njit(cache=True, nogil=True)
 def _bond_trial(eu, ev, top, bot, left, right, order, num_nodes, num_edges, intersection):
     parentTB = np.arange(num_nodes + 2)
@@ -133,8 +117,7 @@ def _bond_trial(eu, ev, top, bot, left, right, order, num_nodes, num_edges, inte
         _union(parentLR, sizeLR, u, v)
         tb = _find(parentTB, vTop) == _find(parentTB, vBot)
         lr = _find(parentLR, vL) == _find(parentLR, vR)
-        # record the first step at which each direction spans (mirrors _site_trial), for the
-        # direction-bias check. This bookkeeping does NOT alter the returned onset o below.
+        # same as we had in the site percolation version to find if there's directional bias
         if tb and tb_onset < 0: tb_onset = step + 1
         if lr and lr_onset < 0: lr_onset = step + 1
         # same branching as site percolation for intersection and union
@@ -158,11 +141,11 @@ def _masks(N, top, bot, left, right):
     ir = np.zeros(N, np.bool_); ir[list(right)] = True
     return it, ib, il, ir
 
-# ---- the trial classes: nogil numba kernel run across a thread pool; per-trial reproducible seeding ----
+# ---- parallel (nogil numba kernel + threads; per-trial reproducible seeding) ----
 from concurrent.futures import ThreadPoolExecutor
 import os
-# Threads for the trial pool. Default = cpu-1. Set PERCOLATE_THREADS to leave cores free -- e.g. so
-# the GUI stays responsive while a long background run saturates the machine.
+# sets the default core usage to cpu - 1, leaving 1 for other tasks 
+# otherwise use "PERCOLATION THREADS" amount
 _NW = int(os.environ.get("PERCOLATE_THREADS", "0")) or max(1, (os.cpu_count() or 4) - 1)
 
 #########################
@@ -187,18 +170,12 @@ class percolationStatsI_par:
 
         with ThreadPoolExecutor(max_workers=nworkers) as ex:
             res = list(ex.map(one, range(trials)))
-        # calculates the results to return. pD (top-bottom) and pR (left-right) are the
-        # per-direction crossing fractions, kept for the direction-bias check that validates
-        # the direction-averaged p_A estimator (see isotropy_test).
+        # calculates the results to return
         self.trialResults = [o / N for o, _, _ in res]
         self.pD = [tb / N for _, tb, _ in res]
         self.pR = [lr / N for _, _, lr in res]
 
-# the rest are the same as the above
-
 class percolationStatsU_par:
-    """Site UNION criterion, thread-parallel. Seeded via SeedSequence(master_seed)
-    so results are reproducible (not bit-identical to the serial random.shuffle path)."""
     def __init__(self, nodes, neighbours, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
         N = len(nodes)
         nbrs, starts = neighbors_to_csr(neighbours)
@@ -210,6 +187,8 @@ class percolationStatsU_par:
             rng = np.random.default_rng(seeds[k])
             order = rng.permutation(N).astype(np.int64)
             onset, _, _ = _site_trial(nbrs, starts, it, ib, il, ir, order, N, False)
+            # Since union stops as soon as EITHER direction spans, the other onset is still unset thus the union doesn't store left-right/top-bottom
+            # this information stil exists due to the intersection for the same run though
             return onset
 
         with ThreadPoolExecutor(max_workers=nworkers) as ex:
@@ -218,13 +197,15 @@ class percolationStatsU_par:
 
 
 class percolationStatsBondI_par:
-    """Bond INTERSECTION criterion, thread-parallel. Set intersection=False for UNION."""
     def __init__(self, nodes, edges, top, bot, left, right, trials,
                  master_seed=0, nworkers=_NW, intersection=True):
         num_nodes = len(nodes)
         edges = np.asarray(edges)
+        # This doesn't need the CSR format, so it splits into x and y components, which is what the trial needs
         eu = edges[:, 0].astype(np.int64); ev = edges[:, 1].astype(np.int64)
+        # permutation over edges
         M = len(edges)
+        # this can connect all the boundary nodes before running since the nodes aren't what turn on or off
         top = np.asarray(list(top), dtype=np.int64);   bot = np.asarray(list(bot), dtype=np.int64)
         left = np.asarray(list(left), dtype=np.int64); right = np.asarray(list(right), dtype=np.int64)
         seeds = np.random.SeedSequence(master_seed).spawn(trials)
@@ -237,40 +218,34 @@ class percolationStatsBondI_par:
 
         with ThreadPoolExecutor(max_workers=nworkers) as ex:
             res = list(ex.map(one, range(trials)))
-        # o = spanning onset (unchanged); pD/pR = per-direction first-span fractions, used by the
-        # direction-bias check that validates the bond p_A estimator (only the intersection run's
-        # pD/pR are consumed; for the union run one of them may be -1 and is ignored).
         self.trialResults = [o / M for o, _, _ in res]
         self.pD = [tb / M for _, tb, _ in res]
         self.pR = [lr / M for _, _, lr in res]
 
-
+# Beauty of object oriented programming
+# Everything is already defined so it is just the above with intersection=False
 class percolationStatsBondU_par(percolationStatsBondI_par):
     def __init__(self, nodes, edges, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
         super().__init__(nodes, edges, top, bot, left, right, trials,
                          master_seed=master_seed, nworkers=nworkers, intersection=False)
 
 
-# ---- Block B: cluster-structure readout for the critical exponents (d_f, gamma/nu, tau) ----
-# The two spanning union-finds above carry VIRTUAL boundary nodes, which glue every boundary site
-# into one artificial mega-cluster -- so their sizes are fiction. Here we maintain a THIRD, PLAIN
-# union-find over real sites only (no virtual nodes) and track the largest real cluster INCREMENTALLY
-# as sites merge; at the first-spanning onset (the self-consistent pseudo-critical point -- NOT a
-# fixed external p_c) that largest cluster is the incipient infinite cluster, whose size s_max ~
-# L^{d_f} gives the fractal dimension. We deliberately record ONLY s_max (d_f): the other static
-# exponents (gamma/nu, tau, beta/nu) follow from d_f by hyperscaling, and their DIRECT cluster-moment
-# estimators are open-boundary biased, so we don't measure them. Everything is combinatorial (site
-# counts), no coordinates -- consistent with the graph-only model.
+# Finds the largest cluster at percolation using a third union-find
+# This is done to find the universality class of the percolation
 @njit(cache=True, nogil=True)
 def _site_cluster_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, N):
-    parentTB = np.arange(N + 2); sizeTB = np.ones(N + 2, dtype=np.int64)   # spanning detection (TB)
-    parentLR = np.arange(N + 2); sizeLR = np.ones(N + 2, dtype=np.int64)   # spanning detection (LR)
-    parentC  = np.arange(N);     sizeC  = np.ones(N,     dtype=np.int64)   # PLAIN: real sites only
+    parentTB = np.arange(N + 2); sizeTB = np.ones(N + 2, dtype=np.int64)
+    parentLR = np.arange(N + 2); sizeLR = np.ones(N + 2, dtype=np.int64)
+    parentC  = np.arange(N);     sizeC  = np.ones(N,     dtype=np.int64)
     opened = np.zeros(N, dtype=np.bool_)
     vTop = N; vBot = N + 1; vL = N; vR = N + 1
-    onset = -1; s_max = 0
+    onset_u = -1; onset_i = -1
+    # s_union is the largest cluster at the union percolation and s_intersection at intersection
+    # Since they share an exponent, these should be close together
+    s_max = 0; s_union = 0; s_inter = 0
     for step in range(N):
         idx = order[step]
+        # it checks the cluster size for the node that just opened
         opened[idx] = True
         if is_top[idx]:   _union(parentTB, sizeTB, vTop, idx)
         if is_bot[idx]:   _union(parentTB, sizeTB, vBot, idx)
@@ -281,31 +256,39 @@ def _site_cluster_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, 
             if opened[nb]:
                 _union(parentTB, sizeTB, idx, nb)
                 _union(parentLR, sizeLR, idx, nb)
-                _union(parentC,  sizeC,  idx, nb)     # real-real merges only
-        s = sizeC[_find(parentC, idx)]                 # size of the cluster idx now sits in
-        if s > s_max:                                  # running max -> largest cluster so far (O(1))
+                _union(parentC,  sizeC,  idx, nb)
+        # _find(parentC, idx) gives the root of the cluster that node idx now belongs to
+        # sizeC[root] is that cluster's size, maintained for free by _union, which already adds sizes when it merges
+        # Every other cluster is untouched this step
+        s = sizeC[_find(parentC, idx)]
+        # if this was bigger than the previous best, replace the previous best
+        if s > s_max:
             s_max = s
         tb = _find(parentTB, vTop) == _find(parentTB, vBot)
         lr = _find(parentLR, vL) == _find(parentLR, vR)
-        if tb or lr:                                   # UNION onset = first spanning (incipient cluster)
-            onset = step + 1
+        # union onset: first either-direction span, record it but keep growing to the intersection onset
+        if onset_u < 0 and (tb or lr):
+            onset_u = step + 1
+            s_union = s_max
+        # intersection onset: first both-direction span so we stop
+        if tb and lr:
+            onset_i = step + 1
+            s_inter = s_max
             break
-    return onset, s_max
+    # degenerate patch that never spanned both ways (does not occur for a valid window) 
+    if onset_u < 0: s_union = s_max
+    if onset_i < 0: s_inter = s_max
+    return onset_u, onset_i, s_union, s_inter
 
-
+# Since this costs a full extra pass and is optional, we put this in a seperate wrapper to the standard stats call
+# It is very similar though
 class percolationStatsExponents_par:
-    """OPT-IN Block-B pass: at the first-spanning onset, read the largest real-sites cluster (the
-    incipient infinite cluster) -> s_max per trial -> d_f (<s_max> ~ L^{d_f}). NOT run by the
-    threshold sweep -- a deliberate extra pass, requested only when d_f is wanted. Records s_max ONLY
-    (see the note above the kernel: gamma/nu and tau follow from d_f by hyperscaling and their direct
-    estimators are open-boundary biased, so we do not measure them)."""
     def __init__(self, nodes, neighbours, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
         N = len(nodes)
         nbrs, starts = neighbors_to_csr(neighbours)
         nbrs = nbrs.astype(np.int64); starts = starts.astype(np.int64)
         it, ib, il, ir = _masks(N, top, bot, left, right)
         seeds = np.random.SeedSequence(master_seed).spawn(trials)
-
         def one(k):
             rng = np.random.default_rng(seeds[k])
             order = rng.permutation(N).astype(np.int64)
@@ -314,8 +297,71 @@ class percolationStatsExponents_par:
         with ThreadPoolExecutor(max_workers=nworkers) as ex:
             res = list(ex.map(one, range(trials)))
         self.N = N
-        self.s_max = np.array([r[1] for r in res], dtype=float)
+        # returns the functions at percolation relevent to df
+        self.s_union = np.array([r[2] for r in res], dtype=float)
+        self.s_inter = np.array([r[3] for r in res], dtype=float)
+        self.s_max = self.s_union
 
 
-# Analysis of results (WLS p_c extrapolation + direction-bias check) now lives in engine/analysis.py
-# so this module stays pure simulation (Newman-Ziff kernels + trial classes).
+# Bond version of the largest-cluster pass: same largest-cluster-at-onset readout, but edges open one at a time
+# Cluster mass is counted in SITES (node count), like the site pass, so the bond d_f is directly comparable to the site d_f
+# d_f is universal, so this should reproduce the  same value as the site
+@njit(cache=True, nogil=True)
+def _bond_cluster_trial(eu, ev, top, bot, left, right, order, num_nodes, num_edges):
+    parentTB = np.arange(num_nodes + 2); sizeTB = np.ones(num_nodes + 2, dtype=np.int64)
+    parentLR = np.arange(num_nodes + 2); sizeLR = np.ones(num_nodes + 2, dtype=np.int64)
+    parentC  = np.arange(num_nodes);     sizeC  = np.ones(num_nodes,     dtype=np.int64)
+    vTop = num_nodes; vBot = num_nodes + 1; vL = num_nodes; vR = num_nodes + 1
+    # nodes are permanent in bond percolation, so wire the boundaries to the virtual nodes up front
+    for k in range(top.shape[0]):    _union(parentTB, sizeTB, vTop, top[k])
+    for k in range(bot.shape[0]):    _union(parentTB, sizeTB, vBot, bot[k])
+    for k in range(left.shape[0]):   _union(parentLR, sizeLR, vL, left[k])
+    for k in range(right.shape[0]):  _union(parentLR, sizeLR, vR, right[k])
+    onset_u = -1; onset_i = -1
+    s_max = 0; s_union = 0; s_inter = 0
+    for step in range(num_edges):
+        e = order[step]
+        u = eu[e]; v = ev[e]
+        _union(parentTB, sizeTB, u, v)
+        _union(parentLR, sizeLR, u, v)
+        _union(parentC,  sizeC,  u, v)          # cluster mass over real nodes only
+        s = sizeC[_find(parentC, u)]            # the just-merged cluster contains u
+        if s > s_max:
+            s_max = s
+        tb = _find(parentTB, vTop) == _find(parentTB, vBot)
+        lr = _find(parentLR, vL) == _find(parentLR, vR)
+        if onset_u < 0 and (tb or lr):
+            onset_u = step + 1
+            s_union = s_max
+        if tb and lr:
+            onset_i = step + 1
+            s_inter = s_max
+            break
+    if onset_u < 0: s_union = s_max
+    if onset_i < 0: s_inter = s_max
+    return onset_u, onset_i, s_union, s_inter
+
+# Same logic
+class percolationStatsBondExponents_par:
+    def __init__(self, nodes, edges, top, bot, left, right, trials, master_seed=0, nworkers=_NW):
+        num_nodes = len(nodes)
+        edges = np.asarray(edges)
+        eu = edges[:, 0].astype(np.int64); ev = edges[:, 1].astype(np.int64)
+        M = len(edges)
+        top = np.asarray(list(top), dtype=np.int64);   bot = np.asarray(list(bot), dtype=np.int64)
+        left = np.asarray(list(left), dtype=np.int64); right = np.asarray(list(right), dtype=np.int64)
+        seeds = np.random.SeedSequence(master_seed).spawn(trials)
+
+        def one(k):
+            rng = np.random.default_rng(seeds[k])
+            order = rng.permutation(M).astype(np.int64)
+            return _bond_cluster_trial(eu, ev, top, bot, left, right, order, num_nodes, M)
+
+        with ThreadPoolExecutor(max_workers=nworkers) as ex:
+            res = list(ex.map(one, range(trials)))
+        self.N = num_nodes
+        self.s_union = np.array([r[2] for r in res], dtype=float)
+        self.s_inter = np.array([r[3] for r in res], dtype=float)
+        self.s_max = self.s_union
+
+

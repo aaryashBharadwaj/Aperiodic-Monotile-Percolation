@@ -1,15 +1,3 @@
-"""Standalone tiling renderer for the hat / spectre / Tile(a,b) family.
-
-Pure drawing (no percolation). The functions return matplotlib Figures so they are reused verbatim
-in two places: here as a CLI that saves PNGs for the paper, and later in the GUI via st.pyplot(fig).
-It also doubles as a GENERATOR VALIDATION: a correct substitution tiling renders GAP-FREE, so a
-wrong transform shows up immediately as visible gaps or overlaps.
-
-Functions (the reusable core the GUI will call):
-    render_tiling(polys, color_by=...)  -> Figure   draw tile polygons; colour by chirality/orientation
-    tiling_polygons(name, ...)          -> [polys]  leaf tiles for 'hat'/'spectre'/'comet'/'chevron'
-    tile_ab_grid(a_values, b_values)    -> Figure   grid of single Tile(a,b) tiles across (a,b)
-"""
 import argparse
 import math
 import os
@@ -19,6 +7,9 @@ matplotlib.use("Agg")   # headless default; a GUI backend overrides this at impo
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.collections import PolyCollection
+
+# Pure drawing (no percolation). The functions return matplotlib Figures so they are reused verbatim
+# It also doubles as a GENERATOR VALIDATION: a correct substitution tiling renders GAP-FREE, so a wrong transform shows up immediately as visible gaps or overlaps.
 
 _BLUE = (0.72, 0.85, 0.96)
 _GOLD = (0.95, 0.74, 0.33)
@@ -32,7 +23,7 @@ _NAMED = {(1.0, S3): "hat", (S3, 1.0): "turtle", (1.0, 1.0): "spectre",
           (1.0, 0.0): "comet", (0.0, 1.0): "chevron"}
 
 # Percolation-THRESHOLD class of Tile(a,b). The threshold depends only on the graph's adjacency,
-# which is invariant under stretching (a,b) as long as the combinatorics don't change -- so every
+# which is invariant under stretching (a,b) as long as the combinatorics don't change  so every
 # generic aperiodic member (a != b, both > 0) shares the HAT'S threshold. The classes split only
 # where the combinatorics change: a==b (spectre), and the degenerate edges a=0 / b=0 (periodic).
 def _threshold_class(a, b):
@@ -46,20 +37,18 @@ def _threshold_class(a, b):
         return "spectre (a=b)", _PURPLE
     return "aperiodic hat family (a≠b) — one shared threshold", _BLUE
 
-
+# Shoelace formula: sum of x_i*y_{i+1} - x_{i+1}*y_i over the outline. The SIGN tells you which way
+# round the vertices go, and reflecting a tile reverses that so a sign test separates hats from
+# mirrored hats without any geometry. np.roll shifts by one to pair each vertex with the next.
 def _signed_areas(polys):
-    """Shoelace signed area per tile; the SIGN flips under reflection, so it separates a tile from
-    its mirror image (for the hat, the ~1/7 reflected tiles)."""
     out = []
     for p in polys:
         p = np.asarray(p); x, y = p[:, 0], p[:, 1]
         out.append(0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
     return np.array(out)
 
-
+# colour by chirality, hue by orientation
 def _tile_colors(polys, mode):
-    """Per-tile face colours. 'chirality' -> two colours by orientation sign (reflected tiles pop);
-    'orientation' -> hue by the first-edge angle (shows rotational classes)."""
     if mode == "chirality":
         a = _signed_areas(polys)
         maj = np.sign(np.median(a)) or 1.0
@@ -71,11 +60,9 @@ def _tile_colors(polys, mode):
         return [cm.twilight(t / (2 * math.pi)) for t in ang]
     return None
 
-
+# Draw tile polygons (each an (n,2) array of outline vertices) as filled cells. Color_by in {None, 'chirality', 'orientation'}. Returns the matplotlib Figure.
 def render_tiling(polys, ax=None, facecolor=_BLUE, edgecolor="black", lw=0.4, title=None,
                   color_by=None):
-    """Draw tile polygons (each an (n,2) array of outline vertices) as filled cells.
-    color_by in {None, 'chirality', 'orientation'}. Returns the matplotlib Figure."""
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 7))
     else:
@@ -90,9 +77,8 @@ def render_tiling(polys, ax=None, facecolor=_BLUE, edgecolor="black", lw=0.4, ti
         ax.set_title(title, fontsize=12)
     return fig
 
-
+# Leaf-tile polygons for a named tiling: 'hat', 'spectre', 'comet', 'chevron'
 def tiling_polygons(name, level=3, ncells=7):
-    """Leaf-tile polygons for a named tiling: 'hat', 'spectre', 'comet', 'chevron'."""
     name = name.lower()
     if name == "hat":
         from generators.hat_generator import (H_init, T_init, P_init, F_init,
@@ -125,11 +111,6 @@ def _named(a, b, tol=0.04):
 
 
 def tile_ab_grid(a_values, b_values):
-    """Grid of single Tile(a,b) polygons across (a,b), coloured by PERCOLATION-THRESHOLD CLASS
-    (same colour = same threshold): the whole aperiodic a!=b interior is ONE class (the hat's
-    threshold, since all those tilings are graph-isomorphic), and only a=b (spectre) and the
-    degenerate edges a=0/b=0 (comet/chevron, periodic) split off. Named members get a bold title.
-    Returns a Figure."""
     from generators.family_geometry import tile_ab
     import matplotlib.patches as mpatches
     na, nb = len(a_values), len(b_values)
@@ -166,7 +147,7 @@ if __name__ == "__main__":
                     choices=["hat", "spectre", "comet", "chevron", "grid", "all"])
     ap.add_argument("--level", type=int, default=3)
     ap.add_argument("--ncells", type=int, default=7)
-    ap.add_argument("--out_dir", default="figures_generated")
+    ap.add_argument("--out_dir", default=os.path.join("paper_results", "figures"))
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 

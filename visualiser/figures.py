@@ -265,3 +265,59 @@ def df_convergence_figure(result, hmax=0.02):
     return fig
 
 
+def nu_omega_figure(result, controls=None, omega_lo=0.5, omega_hi=1.5, n_omega=13, B=100, seed=3, L_min=50.0):
+    """nu (width-line) vs the ASSUMED correction exponent omega. omega is not measurable at accessible
+    sizes, so nu is shown across the whole plausible band [omega_lo, omega_hi] rather than at one value:
+    the message is that nu stays consistent with 4/3 for EVERY omega, so the result doesn't hinge on it.
+    `controls` is an optional list of (label, result) for exact-nu=4/3 lattices (square/triangular) run
+    identically -- the aperiodic run tracking them at every omega is the actual evidence. Shaded = 68%
+    bootstrap CIs. Returns a Figure, or None if the run lacks the onset arrays."""
+    from engine.analysis import _width_nu
+    if result.get("raw_SI") is None:
+        return None
+    if (np.asarray(result["L"], float) >= L_min).sum() < 4:      # too few large sizes to fit a slope
+        return None
+
+    def channels(r):
+        L_all = np.asarray(r["L"], float); keep = L_all >= L_min
+        keys = [k for k in ("raw_SI", "raw_SU", "raw_BI", "raw_BU") if r.get(k) is not None]
+        return L_all[keep], [[np.asarray(a, float) for a, kp in zip(r[k], keep) if kp] for k in keys]
+
+    omegas = np.linspace(omega_lo, omega_hi, n_omega)
+
+    def curve(r, sd):
+        L, chs = channels(r)
+        Ts = [len(ch[0]) for ch in chs]
+        w0 = [np.array([a.std(ddof=1) for a in ch]) for ch in chs]
+        sig = [w / np.sqrt(2.0 * (T - 1)) for w, T in zip(w0, Ts)]
+        line = np.array([_width_nu(L, w0, sig, om) for om in omegas])
+        rng = np.random.default_rng(sd)
+        band = np.array([[_width_nu(L, [np.array([a[rng.integers(0, len(a), len(a))].std(ddof=1)
+                                                  for a in ch]) for ch in chs], sig, om)
+                          for om in omegas] for _ in range(B)])
+        return line, np.percentile(band, 16, axis=0), np.percentile(band, 84, axis=0)
+
+    NU = 4.0 / 3.0
+    fig, ax = plt.subplots(figsize=(7.6, 4.8))
+    ax.axhline(NU, color="#111", lw=1.5, zorder=1)
+    ax.text(omega_hi + 0.005, NU, r"  $\nu=4/3$", va="center", fontsize=11, fontweight="bold")
+    for (lab, cr), col in zip(controls or [], ["#5a8f69", "#c08a3e", "#9467bd"]):
+        ln, lo, hi = curve(cr, seed + 1)
+        ax.plot(omegas, ln, color=col, lw=1.6, ls="--", label=lab, zorder=2)
+        ax.fill_between(omegas, lo, hi, color=col, alpha=0.12, zorder=1)
+    ln, lo, hi = curve(result, seed)
+    ax.plot(omegas, ln, color="#2e6f95", lw=2.6, label="this run", zorder=4)
+    ax.fill_between(omegas, lo, hi, color="#2e6f95", alpha=0.22, zorder=3)
+    ax.axvline(72.0 / 91.0, color="#999", lw=1, ls=":", zorder=1)
+    ax.text(72.0 / 91.0 + 0.01, ax.get_ylim()[0], r" $\omega=\frac{72}{91}$ (2D)", fontsize=8,
+            color="#777", va="bottom")
+    ax.set_xlabel(r"assumed correction exponent  $\omega$")
+    ax.set_ylabel(r"extracted correlation-length exponent  $\nu$")
+    ax.set_xlim(omega_lo, omega_hi)
+    ax.set_title(r"$\nu$ vs assumed $\omega$ — consistent with 4/3 across the whole band")
+    ax.grid(alpha=0.15)
+    ax.legend(loc="lower right", frameon=False, fontsize=9)
+    fig.tight_layout()
+    return fig
+
+

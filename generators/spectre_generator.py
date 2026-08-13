@@ -1,15 +1,11 @@
-"""Spectre monotile generator — Tile(1,1) with reflections forbidden (chiral).
-
-Deliberately mirrors hat_generator.py: it reuses the SAME affine primitives
-(pt, mul, trot, ttrans, transPt) and the SAME metatile+substitution method.
-The only differences are the base tile (the Spectre polygon) and the substitution
-rules, which are the two-rule chiral system of Smith-Myers-Kaplan-Goodman-Strauss:
-    Spectre -> 1 Mystic + 7 Spectres,   Mystic -> 1 Mystic + 6 Spectres.
-Substitution data ported from the reference implementation github.com/shrx/spectre
-(itself a port of Kaplan's construction), so the tiling can be verified against theirs.
-"""
 import math
 from generators.hat_generator import pt, mul, trot, ttrans, transPt
+
+
+# Deliberately mirrors hat_generator.py: it reuses the SAME affine primitives (pt, mul, trot, ttrans, transPt) and the SAME metatile+substitution method.
+# The only differences are the base tile (the Spectre polygon) and the substitution rules, which are the two-rule chiral system of Smith-Myers-Kaplan-Goodman-Strauss:
+# Spectre -> 1 Mystic + 7 Spectres,   Mystic -> 1 Mystic + 6 Spectres.
+# Substitution data ported from the reference implementation github.com/shrx/spectre (itself a port of Kaplan's construction), so the tiling can be verified against theirs.
 
 SQ3 = math.sqrt(3)
 IDENTITY = [1, 0, 0, 0, 1, 0]
@@ -33,25 +29,22 @@ def transTo(p, q):
     return ttrans(q['x'] - p['x'], q['y'] - p['y'])
 
 
-# The 4 reference points ("quad") that the substitution uses to align tiles.
+# Despite having 14 vertices, it only needs 4 references to describe its tiling
 QUAD_IDX = [3, 5, 7, 11]
 
 
-# SpectreTile = leaf tile (one spectre): shape + label + quad (4 reference points at QUAD_IDX);
-#   children=None marks it a leaf (so the graph builder's level=None recursion stops here).
-# MetaTile = supertile: children = list of {T, geom}; quad = its 4 reference points.
-# transTo(p,q) = translation p->q (trivial). These mirror hat_generator's HatTile/MetaTile so
-# the graph builder consumes either identically.
-# --- Base tile (leaf) — mirrors HatTile ---
+# SpectreTile is the main object
 class SpectreTile:
     def __init__(self, shape, label):
         self.shape = shape
-        self.label = label           # tile type key used by the substitution rules
+        # this is tile type used by the substitution rules
+        self.label = label           
+        # this is what makes it a leaf
         self.children = None
         self.quad = [shape[i] for i in QUAD_IDX]
 
 
-# --- Supertile — mirrors hat_generator.MetaTile (children of {'T','geom'}) ---
+# Mirrors hat_generator.MetaTile (children of {'T','geom'}) 
 class MetaTile:
     def __init__(self, children, quad):
         self.children = children     # list of {'T': transform, 'geom': tile}
@@ -59,13 +52,8 @@ class MetaTile:
         self.shape = quad
 
 
-# The spectre substitution system. buildSpectreBase() = the level-0 tiles (8 single-spectre types
-# Delta..Psi, plus Gamma = the "Mystic", a MetaTile of two spectres). buildSupertiles() applies one
-# inflation step; build_spectre_patch(levels) iterates it. The transforms are PORTED VERBATIM from
-# github.com/shrx/spectre -- verify them by provenance (diff SPECTRE_POINTS / super_rules /
-# transformation_rules against that source) and by gap-free output, NOT by re-deriving them; a wrong
-# transform shows as visible gaps/overlaps. The frame reflection R keeps the tiling chiral (no
-# reflected spectres).
+# The spectre substitution system. buildSpectreBase() = the level-0 tiles 
+# eight of the nine types are just a single spectre, Gamma is two
 def buildSpectreBase():
     base = {lbl: SpectreTile(SPECTRE_POINTS, lbl) for lbl in TILE_NAMES if lbl != "Gamma"}
     mystic = MetaTile(
@@ -79,7 +67,7 @@ def buildSpectreBase():
     base["Gamma"] = mystic
     return base
 
-
+# Builds a larger spectre out of the smaller tiles
 def buildSupertiles(sys):
     quad = sys["Delta"].quad
     R = [-1, 0, 0, 0, 1, 0]     # in-substitution reflection of the reference frame (tiling stays chiral)
@@ -123,7 +111,7 @@ def buildSupertiles(sys):
 
 
 def build_spectre_patch(levels):
-    """Iterate the substitution `levels` times; return one supertile to analyse."""
+    # Iterate the substitution `levels` times; return one supertile to analyse
     tiles = buildSpectreBase()
     for _ in range(levels):
         tiles = buildSupertiles(tiles)

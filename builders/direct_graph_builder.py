@@ -5,121 +5,95 @@ from scipy.sparse.csgraph import connected_components
 from generators.hat_generator import mul, transPt
 from builders.graph_core import edges_to_adjacency
 
-
+# The same vertex can sometimes be generated multiple times via different tiles
+# This takes vertices that are a chosen 'tol' apart and makes sure there's only one
+# This isn't just bug fixing, it's what enables the merging by taking independent tiles and removing their seperation
 def dedup_vertices(raw, tol=1e-5):
-    """Merge vertices within `tol` of each other into unique nodes.
-
-    raw : (V, 2) float array of vertex coordinates (with duplicates where tiles meet).
-    Returns (unique_nodes (n_unique, 2), labels (V,) int64) where labels[k] is the unique-node
-    id of raw row k. Coincident raw rows share a label; the last-written coordinate wins (they
-    agree to within tol, so it doesn't matter which).
-
-    Shared by the DIRECT (vertex) builders -- the hat/spectre patch build below, the periodic family
-    blocks, and the penrose builder -- since "nodes are merged coincident corners" is the defining
-    idea of the vertex graph. The dual graph does NOT use this: it keeps tiles as nodes and only
-    COUNTS coincident corners per tile-pair.
-    """
     V = len(raw)
-    # query_pairs returns every pair of raw vertices within tol of each other -- the coincidences
-    # where tiles meet. output_type='ndarray' keeps it vectorised (not a Python set of tuples).
     tree = KDTree(raw)
+    # Pairs is an array of vertex pairs that are close enough to be floating point equivalents
+    # The threshold of closeness is tol
+    # This creates a table 'unique_nodes' and labels a lookup
     pairs = tree.query_pairs(r=tol, output_type='ndarray')
     del tree
     if len(pairs):
-        # Treat the coincident pairs as a sparse adjacency matrix (scipy's representation); its
-        # connected components ARE the merged nodes. directed=False because coincidence is
-        # symmetric (the edge is bidirectional).
+        # g is pairs as a sparse adjcacency matrix since that is scipy's representation
         g = coo_matrix((np.ones(len(pairs), dtype=np.int8), (pairs[:, 0], pairs[:, 1])),
                        shape=(V, V))
+        # Directed is false since an edge is bidirectional
         n_unique, labels = connected_components(g, directed=False)
         del g
+    # No two vertices are the same and you don't have to worry
     else:
-        # No two vertices coincide -> every raw vertex is already its own node.
         n_unique, labels = V, np.arange(V)
     labels = labels.astype(np.int64)
     unique_nodes = np.empty((n_unique, 2), dtype=np.float64)
-    # unique_nodes[id] = that node's coordinates. The last raw row written to a slot wins; all rows
-    # sharing a label are coincident within tol, so which one wins doesn't matter.
+    # The last vertex written to a slot becomes the coordinates for it
+    # This preserves the coordinates for each node
+    # unique_nodes[id] gives you the coordinates for a given node ID
     unique_nodes[labels] = raw
     return unique_nodes, labels
 
-
+# Takes a raw array of coordinates and generates the graph out of them
 def graph_from_raw(raw, poly_sizes, tol=1e-5):
-    """Direct (vertex) graph for an edge-to-edge polygon tiling, from concatenated outline vertices.
-
-    raw : (V, 2) float array — every tile's outline vertices, concatenated in polygon order.
-    poly_sizes : (P,) int array — poly_sizes[k] is the vertex count of polygon k, so the polygons
-                 partition raw into contiguous blocks.
-    Builds the graph shared by every edge-to-edge polygon tiling (hat, spectre, comet, chevron, ...):
-    merge coincident vertices into nodes, connect each tile's consecutive outline vertices
-    (perimeter edges, wrapping last->first), and assemble the adjacency. Tilings differ only in how
-    they PRODUCE (raw, poly_sizes); this assembly is common. Returns
-    (unique_nodes (n, 2), neighbors (list of n int32 arrays)).
-
-    NOT for tilings whose graph edges aren't the tile perimeter — penrose (the rhombus rule) and the
-    dual (tile adjacency) build their own (lo, hi) and call graph_core.edges_to_adjacency directly.
-    """
+    # converts raw into an np array if it isn't one
     raw = np.asarray(raw)
+    # build_neighbor_graph_fast is a python array, this changes it
     poly_sizes = np.asarray(poly_sizes, dtype=np.int64)
+    # the length of raw
     V = len(raw)
 
-    # Merge coincident vertices (the shared points where tiles meet) into unique node ids.
-    # labels[k] = node id of raw vertex k. See dedup_vertices for the mechanics.
+    # applies the dedup
     unique_nodes, labels = dedup_vertices(raw, tol)
     n_unique = len(unique_nodes)
 
-    # Perimeter edges, from the polygon sizes alone (no coordinates). offsets[k] is where polygon k
-    # starts in raw; the chain src=k -> dst=k+1 gives 1-2, 2-3, ..., then each polygon's LAST vertex
-    # is redirected back to its FIRST, closing the outline.
+    # make an array whose size is the number of polygons + 1 and initialise to 0
     offsets = np.empty(len(poly_sizes) + 1, dtype=np.int64)
     offsets[0] = 0
+    # Create a cumulative sum of the sizes of each polygon and put it in offsets
+    # What this gives you is the index of each new polygon in raw
     np.cumsum(poly_sizes, out=offsets[1:])
+    # what we have is a source and destination arrays (src[i], dst[i]) represents an edge src[i]-dst[i]
+    # we create the source list, which is just V numbers in order
     src = np.arange(V, dtype=np.int64)
+    # for now the destination list is just the same numbers increased by one
+    # what this gives is a line since you have 1-2, 2-3, 3-4
     dst = src + 1
+    # however at each end of a polygon you loop it back to the first vertex
     dst[offsets[1:] - 1] = offsets[:-1]
     del raw, poly_sizes
-
-    # Map the raw-vertex chain onto node ids, drop self-loops (endpoints that merged into one node),
-    # and deduplicate: every shared edge is emitted by both adjoining tiles. Pack each undirected
-    # edge into one integer (lo*n_unique + hi) so np.unique collapses the duplicates.
     u = labels[src]; v = labels[dst]
     del src, dst, labels
+    # Each edge is counted twice from the two polygons that share it so we deduplicate
     m = u != v
+    # always put the smaller ID first
     lo = np.minimum(u[m], v[m]); hi = np.maximum(u[m], v[m])
     del u, v, m
+    # .unique only works on flat arrays so you flatten each pair into one
     key = np.unique(lo * np.int64(n_unique) + hi)
     lo = key // n_unique; hi = key % n_unique
     del key
 
+    # turns the edge list into a neighbours adjacency graph
     neighbors = edges_to_adjacency(lo, hi, n_unique)
     return unique_nodes, neighbors
 
-
+# Turns an array of tiles into an array of raw coordinates as the format for raw
+# Keeps per-tile vertex counts so tile boundaries aren't lost
 def graph_from_polygons(polys, tol=1e-5):
-    """Direct (vertex) graph from a list of tile-outline polygons.
-
-    polys : iterable of (n_i, 2) arrays, each one tile's outline vertices in order.
-    Convenience wrapper over graph_from_raw for callers that already hold the polygons as a list
-    (periodic blocks; future one-off tilings): concatenates them into (raw, poly_sizes) and builds
-    the graph. Returns (unique_nodes, neighbors).
-    """
     polys = [np.asarray(p) for p in polys]
     poly_sizes = np.fromiter((len(p) for p in polys), dtype=np.int64, count=len(polys))
     raw = np.concatenate(polys)
     return graph_from_raw(raw, poly_sizes, tol)
 
-# DIRECT (vertex) graph builder for the patch-based aperiodic tilings -- the hat AND the spectre:
-# nodes are tile corners, edges are tile perimeters. This function only COLLECTS every leaf tile's
-# raw polygon vertices (in collection order) plus each tile's vertex count; the assembly --
-# merge coincident vertices into unique node ids, then build the adjacency list -- is graph_from_raw
-# above (the same routine the periodic family blocks reach via graph_from_polygons).
-# tol is a choice for which nodes are close enough to be the same node.
+
+# Builds a graph representation of the hat tiling by extracting nodes and edges using numpy and scipy for optimisation
+# Collects raw polygon vertices of every leaf tile (in order) + each tile's vertex count
+# Merge near duplicates that belong to multiple tiles
+# Use deduplication algorithm to give each node a unique Id and build adjacency list (list of int32 arrays)
 def build_neighbor_graph_fast(patch, level=0, tol=1e-5):
-    # Exact-size pre-allocation: count the leaf-tile vertices in one light pass (tree walk only, no
-    # transforms), then allocate exactly that and fill. This replaces a fixed 20M cap that SILENTLY
-    # dropped vertices past the limit and then crashed on the raw/poly_sizes mismatch -- large aperiodic
-    # patches (spectre level 7 has ~30M raw vertices) now build correctly, and small patches no longer
-    # over-allocate a 320MB buffer.
+    # this replaces the predefined array size by doing the same walk as collect but without the transforms
+    # Cheap enough to run first so the buffer can be sized exactly
     def _count(patch, level):
         ch = getattr(patch, "children", None)
         if ch and (level is None or level > 0):
@@ -160,130 +134,46 @@ def build_neighbor_graph_fast(patch, level=0, tol=1e-5):
     # [4, 3, 5] means poly0 has 4 vertices, poly1 has 3, poly2 has 5
     poly_sizes = np.asarray(poly_sizes, dtype=np.int64)
 
-    # This builder only COLLECTS the leaf-tile vertices (above); the graph itself -- merge coincident
-    # vertices, connect each tile's perimeter, assemble adjacency -- is graph_from_raw (above), the
-    # assembly shared with every edge-to-edge polygon tiling (spectre, comet, chevron, ...).
+    # sends to graph_from_raw to build an adjecency graph
     return graph_from_raw(raw, poly_sizes, tol)
 
-#Convert adjacency list to Compressed Sparse Row (CSR) format for storage.
-def neighbors_to_csr(neighbors):
-    neighbor_starts = np.zeros(len(neighbors) + 1, dtype=np.int32)
-    total = 0
-    for i, nbrs in enumerate(neighbors):
-        neighbor_starts[i] = total
-        total += len(nbrs)
-    neighbor_starts[-1] = total
-    
-    neighbors_arr = np.zeros(total, dtype=np.int32)
-    idx = 0
-    for nbrs in neighbors:
-        neighbors_arr[idx:idx+len(nbrs)] = nbrs
-        idx += len(nbrs)
-    
-    return neighbors_arr, neighbor_starts
 
-
-# Give it a list of which nodes to keep and it keeps those 
-# Essentially finds edges where both input and output are in the provided list
-def create_subgraph(master_nodes, master_neighbors, inside_original_indices):
-    # master nodes are nodes of the original, sub_nodes are of the smaller region
-    sub_nodes = master_nodes[inside_original_indices]
-    num_sub_nodes = len(sub_nodes)
-    original_to_new_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(inside_original_indices)}
-    sub_neighbors = [[] for _ in range(num_sub_nodes)]
-    sub_edges = set()
-
-    # The inner loop iterates edges per node
-    # The outer loop iterates over nodes
-    for new_idx, orig_idx in enumerate(inside_original_indices):
-        for nbr_orig_idx in master_neighbors[orig_idx]:
-            # The elements in the dictonary are renumbered so that you still have 0,1,2... (N-1)
-            new_nbr_idx = original_to_new_map.get(nbr_orig_idx)
-            # add to the new graph only if the nodes are contained within the dictionary
-            if new_nbr_idx is not None:
-                sub_neighbors[new_idx].append(new_nbr_idx)
-                sub_edges.add((min(new_idx, new_nbr_idx), max(new_idx, new_nbr_idx)))
-                
-    sub_neighbors = [np.array(n, dtype=np.int32) for n in sub_neighbors]
-    sub_edges_list = np.array(list(sub_edges), dtype=np.int32)
-    
-    return sub_nodes, sub_neighbors, original_to_new_map, sub_edges_list
-
-# Find the centre of the largest (axis-aligned) square that fits inside the node cloud, so a square
-# frame can be placed on ANY patch without a hardcoded, size-specific centre. Bins nodes into an
-# H-sized grid, keeps cells whose occupancy is >= half the median (the "filled" interior, excluding
-# the sparse fringe), and runs the classic maximal-all-ones-square DP on that mask. Returns
-# (cx, cy, side); H is the grid resolution in the tiling's coordinate units.
+# finds the centre of the largest square that can be generated on an input patch
 def largest_square_center(nodes, H=4.0):
+
+    # split the coordinates into their x and y components
     xs, ys = nodes[:, 0], nodes[:, 1]
+    # we find the minimum and maximum coordinates, which creates a bounding box
     xmin, xmax, ymin, ymax = xs.min(), xs.max(), ys.min(), ys.max()
+    # chop the rectangle into squares with length 4 units
+    # x_max - x_min makes the leftmost edge zero, /H converts to cell units
+    # Thus anything with x between 12 and 16 gives column 3
     nx = int(np.ceil((xmax - xmin) / H)) + 1
     ny = int(np.ceil((ymax - ymin) / H)) + 1
     ix = ((xs - xmin) / H).astype(np.int64)
     iy = ((ys - ymin) / H).astype(np.int64)
     cnt = np.zeros((ny, nx), np.int64); np.add.at(cnt, (iy, ix), 1)
+    # Check if the patch is sparse, if it is we need to make rebuild our cells larger
+    # Otherwise it would calculate things on the interior as on the outside 
+    if np.median(cnt[cnt > 0]) < 3.0:
+        H = H * float(np.sqrt(12.0 / np.median(cnt[cnt > 0])))
+        nx = int(np.ceil((xmax - xmin) / H)) + 1
+        ny = int(np.ceil((ymax - ymin) / H)) + 1
+        ix = ((xs - xmin) / H).astype(np.int64)
+        iy = ((ys - ymin) / H).astype(np.int64)
+        cnt = np.zeros((ny, nx), np.int64); np.add.at(cnt, (iy, ix), 1)
     thr = max(1.0, 0.5 * np.median(cnt[cnt > 0]))    # "filled" = at least half the median occupancy
     F = cnt >= thr
     dp = np.zeros_like(cnt, np.int32); best = bi = bj = 0
+    # Use dynamic programming to find the largest square with every cell valid recursively
     for i in range(ny):
         for j in range(nx):
             if F[i, j]:
                 dp[i, j] = 1 if (i == 0 or j == 0) else 1 + min(dp[i-1, j], dp[i, j-1], dp[i-1, j-1])
                 if dp[i, j] > best:
                     best, bi, bj = dp[i, j], i, j
+    # convert back into non-cell coordinates
     side = best * H
     cx = xmin + (bj - best / 2 + 0.5) * H
     cy = ymin + (bi - best / 2 + 0.5) * H
     return cx, cy, side
-
-
-# Creates the square frame that create_subgraph uses to create our region. center_x/center_y default
-# to None -> auto-placed at the centre of the largest inscribable square (so the SAME code frames any
-# patch/size); pass explicit values to pin a centre (the hat r=6 run passes (515,-273), the
-# precomputed largest-square centre for that patch).
-def analyze_square_frame(master_nodes, master_neighbors, L, boundary_thickness=1.0,
-                         center_x=None, center_y=None):
-    if center_x is None or center_y is None:
-        center_x, center_y, _ = largest_square_center(master_nodes)
-
-    x_min, x_max = center_x - L / 2.0, center_x + L / 2.0
-    y_min, y_max = center_y - L / 2.0, center_y + L / 2.0
-    
-    nodes = master_nodes
-    # Find all nodes inside the square region
-    inside_mask = (nodes[:, 0] >= x_min) & (nodes[:, 0] <= x_max) & \
-                  (nodes[:, 1] >= y_min) & (nodes[:, 1] <= y_max)
-    inside_original_indices = np.where(inside_mask)[0]
-    inside_nodes_coords = nodes[inside_original_indices]
-    # Early return if region is too small
-    if len(inside_original_indices) < 2:
-        return {'node_count': 0}
-
-    sub_nodes, sub_neighbors, original_to_new_map, sub_edges = create_subgraph(
-        master_nodes, master_neighbors, inside_original_indices
-    )
-    # Identify boundary nodes (nodes within boundary_thickness of edges)
-    top_mask = (inside_nodes_coords[:, 1] >= y_max - boundary_thickness)
-    bottom_mask = (inside_nodes_coords[:, 1] <= y_min + boundary_thickness)
-    left_mask = (inside_nodes_coords[:, 0] <= x_min + boundary_thickness)
-    right_mask = (inside_nodes_coords[:, 0] >= x_max - boundary_thickness)
-    
-    new_top = [original_to_new_map[idx] for idx in inside_original_indices[top_mask]]
-    new_bottom = [original_to_new_map[idx] for idx in inside_original_indices[bottom_mask]]
-    new_left = [original_to_new_map[idx] for idx in inside_original_indices[left_mask]]
-    new_right = [original_to_new_map[idx] for idx in inside_original_indices[right_mask]]
-    # Return results for analysis
-    return {
-        'L_value': L,
-        'sub_graph_nodes': sub_nodes,
-        'sub_graph_neighbors': sub_neighbors,
-        'sub_graph_edges': sub_edges,
-        'node_count': len(sub_nodes),
-        'edge_count': len(sub_edges),
-        'top_boundary_nodes': np.array(new_top, dtype=np.int32),
-        'bottom_boundary_nodes': np.array(new_bottom, dtype=np.int32),
-        'left_boundary_nodes': np.array(new_left, dtype=np.int32),
-        'right_boundary_nodes': np.array(new_right, dtype=np.int32),
-        'center_x': center_x,
-        'center_y': center_y
-    }

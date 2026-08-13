@@ -19,8 +19,9 @@ import time
 from interface.gui_backend import (REPO_ROOT, build_graph, run_one, warm_up, _frame_data,
                                     default_bt, TRI, LAUNCH_OVERHEAD_S)
 
-CALIB_PATH = os.path.join(REPO_ROOT, "data", "gui_calib.json")     # machine-dependent: per-trial cost (gitignored)
-GEOM_PATH = os.path.join(REPO_ROOT, "data", "gui_geometry.json")   # machine-independent: precomputed tiling geometry
+_HERE = os.path.dirname(os.path.abspath(__file__))                 # this interface/ folder (the GUI's config lives beside it)
+CALIB_PATH = os.path.join(_HERE, "gui_calib.json")                 # machine-dependent: per-trial cost (gitignored)
+GEOM_PATH = os.path.join(_HERE, "gui_geometry.json")               # machine-independent: precomputed tiling geometry
 
 
 def _default_calib():

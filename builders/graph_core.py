@@ -1,33 +1,112 @@
-"""The one graph-assembly step shared by BOTH graph builders (direct AND dual).
-
-edges_to_adjacency is the single primitive common to every graph in the project: given a deduped
-undirected edge list, build the neighbour adjacency. It lives here, on its own, so that step is
-written and verified ONCE -- the direct builder (direct_graph_builder), the penrose builder, and the
-dual builder (dual_graph_builder) all end here.
-
-Everything else is builder-specific and lives with its builder, NOT in this shared module: vertex
-dedup + the perimeter direct graph are in direct_graph_builder (used by the hat/spectre patch build,
-the periodic family blocks, and penrose's vertex dedup); the shared-vertex-count dual assembly is in
-dual_graph_builder. Only this one step is genuinely common to direct AND dual, so only it lives here.
-"""
 import numpy as np
 
+# Generic graph operations shared by the direct and dual builders, nothing here knows about tilings.
 
 def edges_to_adjacency(lo, hi, n):
-    """Build neighbour lists from a deduped undirected edge list.
-
-    lo, hi : equal-length int arrays; edge i connects node lo[i] to node hi[i] (already unique,
-             one direction, no duplicates). n : number of nodes.
-    Returns a list of n int32 arrays (each node's neighbours). Both directions are emitted, then
-    grouped by source with a stable sort + bincount (the same assembly every builder ends with).
-    """
-    # Emit both directions, then a stable sort by source groups each node's edges contiguously, so
-    # bincount + cumsum give the [start, end) slice bounds of every node's neighbour list.
+    # edge[i] joins srcs[i] to dsts[i] 
+    # So if srcs[4] = 1 and dsts[4] = 2: 1-2 is an edge
     srcs = np.concatenate([lo, hi])
+    # it intentionally switches hi and lo, so that [1,2] and [2,1] both exist
     dsts = np.concatenate([hi, lo]).astype(np.int32)
+    # sort these by their source
     order = np.argsort(srcs, kind='stable')
     srcs = srcs[order]; dsts = dsts[order]
     bounds = np.empty(n + 1, dtype=np.int64)
     bounds[0] = 0
+    # np.bincount(srcs, minlength=n) gives the degree for a given node
+    # the cumulative creates an index for each node and gives it to bounds
     np.cumsum(np.bincount(srcs, minlength=n), out=bounds[1:])
+    # slicing this creates an adjacency graph
     return [dsts[bounds[i]:bounds[i + 1]] for i in range(n)]
+
+
+#Convert adjacency list to Compressed Sparse Row (CSR) format for storage.
+def neighbors_to_csr(neighbors):
+    neighbor_starts = np.zeros(len(neighbors) + 1, dtype=np.int32)
+    total = 0
+    for i, nbrs in enumerate(neighbors):
+        neighbor_starts[i] = total
+        total += len(nbrs)
+    neighbor_starts[-1] = total
+    neighbors_arr = np.zeros(total, dtype=np.int32)
+    idx = 0
+    for nbrs in neighbors:
+        neighbors_arr[idx:idx+len(nbrs)] = nbrs
+        idx += len(nbrs)
+
+    return neighbors_arr, neighbor_starts
+
+
+# Give it a list of which nodes to keep and it keeps those
+# Essentially finds edges where both input and output are in the provided list
+def create_subgraph(master_nodes, master_neighbors, inside_original_indices):
+    # master nodes are nodes of the original, sub_nodes are of the smaller region
+    sub_nodes = master_nodes[inside_original_indices]
+    num_sub_nodes = len(sub_nodes)
+    original_to_new_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(inside_original_indices)}
+    sub_neighbors = [[] for _ in range(num_sub_nodes)]
+    sub_edges = set()
+
+    # The inner loop iterates edges per node
+    # The outer loop iterates over nodes
+    for new_idx, orig_idx in enumerate(inside_original_indices):
+        for nbr_orig_idx in master_neighbors[orig_idx]:
+            # The elements in the dictonary are renumbered so that you still have 0,1,2... (N-1)
+            new_nbr_idx = original_to_new_map.get(nbr_orig_idx)
+            # add to the new graph only if the nodes are contained within the dictionary
+            if new_nbr_idx is not None:
+                sub_neighbors[new_idx].append(new_nbr_idx)
+                sub_edges.add((min(new_idx, new_nbr_idx), max(new_idx, new_nbr_idx)))
+
+    sub_neighbors = [np.array(n, dtype=np.int32) for n in sub_neighbors]
+    sub_edges_list = np.array(list(sub_edges), dtype=np.int32)
+
+    return sub_nodes, sub_neighbors, original_to_new_map, sub_edges_list
+
+
+# Cuts an L x L window out of a graph and returns it as a standalone subgraph
+# It also identifies which existing nodes lie within boundary_thickness of each wall, and returns four sets of them
+def analyze_square_frame(nodes, neighbors, L, boundary_thickness=1.0, center_x=None, center_y=None):
+    if center_x is None or center_y is None:
+        raise ValueError("analyze_square_frame needs an explicit centre (build_graph supplies it).")
+    # finds the minimum and maximum to make the square
+    x_min, x_max = center_x - L / 2.0, center_x + L / 2.0
+    y_min, y_max = center_y - L / 2.0, center_y + L / 2.0
+
+    # Find all nodes inside the square region
+    inside_mask = (nodes[:, 0] >= x_min) & (nodes[:, 0] <= x_max) & \
+                  (nodes[:, 1] >= y_min) & (nodes[:, 1] <= y_max)
+    inside_original_indices = np.where(inside_mask)[0]
+    inside_nodes_coords = nodes[inside_original_indices]
+    # Early return if region is too small
+    if len(inside_original_indices) < 2:
+        return {'node_count': 0}
+
+    sub_nodes, sub_neighbors, original_to_new_map, sub_edges = create_subgraph(
+        nodes, neighbors, inside_original_indices
+    )
+    # Identify boundary nodes (nodes within boundary_thickness of edges)
+    top_mask = (inside_nodes_coords[:, 1] >= y_max - boundary_thickness)
+    bottom_mask = (inside_nodes_coords[:, 1] <= y_min + boundary_thickness)
+    left_mask = (inside_nodes_coords[:, 0] <= x_min + boundary_thickness)
+    right_mask = (inside_nodes_coords[:, 0] >= x_max - boundary_thickness)
+
+    new_top = [original_to_new_map[idx] for idx in inside_original_indices[top_mask]]
+    new_bottom = [original_to_new_map[idx] for idx in inside_original_indices[bottom_mask]]
+    new_left = [original_to_new_map[idx] for idx in inside_original_indices[left_mask]]
+    new_right = [original_to_new_map[idx] for idx in inside_original_indices[right_mask]]
+    # Return results for analysis
+    return {
+        'L_value': L,
+        'sub_graph_nodes': sub_nodes,
+        'sub_graph_neighbors': sub_neighbors,
+        'sub_graph_edges': sub_edges,
+        'node_count': len(sub_nodes),
+        'edge_count': len(sub_edges),
+        'top_boundary_nodes': np.array(new_top, dtype=np.int32),
+        'bottom_boundary_nodes': np.array(new_bottom, dtype=np.int32),
+        'left_boundary_nodes': np.array(new_left, dtype=np.int32),
+        'right_boundary_nodes': np.array(new_right, dtype=np.int32),
+        'center_x': center_x,
+        'center_y': center_y
+    }
