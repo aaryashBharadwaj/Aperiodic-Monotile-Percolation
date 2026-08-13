@@ -115,6 +115,15 @@ def main():
             valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, rSMi, rBSM, rBSMi, skipped = \
                 ([] for _ in range(14))
 
+    # The job id doesn't distinguish an --exponents run from a plain one, so the same params can resume
+    # a checkpoint written WITHOUT the largest-cluster pass. That checkpoint has no per-size s_max, so the
+    # d_f accumulators would be short by start_i entries (and fit_exponents would then silently drop d_f).
+    # If we want exponents but the resumed accumulators don't line up with the sizes, restart clean.
+    if args.exponents and len(rSM) != len(valid):
+        start_i = 0
+        valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, rSMi, rBSM, rBSMi, skipped = \
+            ([] for _ in range(14))
+
     def save_ckpt(next_i):
         np.savez(ckpt_tmp,
                  Lvals=np.array(valid, float), SI=np.array(rSI, float), SU=np.array(rSU, float),
