@@ -17,3 +17,6 @@ paper_results/npz/*
 paper_results/figures/*
 !paper_results/npz/.gitkeep
 !paper_results/figures/.gitkeep
+
+# editor/agent local config
+.claude/
