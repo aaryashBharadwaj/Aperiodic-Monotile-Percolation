@@ -472,8 +472,11 @@ def paper_preset(member, kind):
     if member == "Hat":
         return {"patch": 6, "L_min": 10.0, "L_max": 1000.0, "gap": 10.0, "T": 1000, "seed": seed}
     if member == "Spectre":
-        ge = geometry("Spectre", kind, 6)
-        side = ge[1] if ge else 400.0
+        # Direct and dual MUST span the same physical window -- comparing p_c across the two graphs only
+        # means anything on a shared extent. The two node clouds give different solid squares, so cap L_max
+        # at the SMALLER (the tighter ceiling binds both); this makes the preset kind-independent.
+        sides = [geometry("Spectre", k, 6) for k in ("direct", "dual")]
+        side = min([s[1] for s in sides if s], default=400.0)
         Lmax = int((side * 0.92) // 10 * 10)
         gap = max(10.0, round(Lmax / 40 / 10) * 10)
         return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 500, "seed": seed}
