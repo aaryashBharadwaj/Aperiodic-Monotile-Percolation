@@ -89,6 +89,54 @@ def read_job_status(jid):
         return None
 
 
+LIVE_STATES = ("launching", "building", "running", "finalising")
+
+
+def _pid_alive(pid):
+    """True if a process with this pid is currently running. Used to tell a genuinely-running worker
+    from a stale 'running' status left by a worker that was killed (crash, machine powered off) and
+    never got to flip its status to done/error."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(SYNCHRONIZE, False, pid)
+        if not h:
+            return False                       # no such process (or it already exited)
+        try:
+            return k.WaitForSingleObject(h, 0) != 0   # 0 == WAIT_OBJECT_0 == signalled == exited
+        finally:
+            k.CloseHandle(h)
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True                        # exists but not ours to signal
+        return True
+
+
+def job_is_live(s):
+    """A job counts as live only if its status is a live state AND its worker process is actually
+    alive. A worker killed mid-run leaves a 'running' status that never flips -- without this check
+    that stale status shows as running forever and (worse) keeps the Run button disabled. The
+    'launching' placeholder is written before the worker exists, so give it a short grace window
+    before demanding a live pid."""
+    if not s or s.get("status") not in LIVE_STATES:
+        return False
+    pid = s.get("pid")
+    if pid is None:
+        return (time.time() - s.get("started", 0)) < 30.0
+    return _pid_alive(pid)
+
+
 def list_jobs():
     """All known jobs (running + finished), newest activity first."""
     out = []

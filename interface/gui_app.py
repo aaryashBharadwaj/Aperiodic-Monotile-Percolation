@@ -662,11 +662,8 @@ def show_results(res, label, key_prefix, meta=None):
                    rf"static exponents follow by hyperscaling ($\tau = {h['tau']:.3f}$, "
                    rf"$\gamma/\nu = {h['gamma_nu']:.3f}$, $\beta/\nu = {h['beta_nu']:.4f}$) and are not "
                    rf"measured directly.")
-        fdf = figs.df_figure(res)
-        if fdf is not None:
-            st.pyplot(fdf, width="content")
-            st.download_button("Download d_f plot", _fig_bytes(fdf), mime="image/png",
-                               file_name=f"{key_prefix}_df.png", key=f"{key_prefix}_dl_df")
+        # (A plain log-log <S_max>-vs-L plot was dropped: on log axes the fit and the 91/48 reference
+        #  sit on top of each other, so it showed nothing the number and the convergence plot don't.)
         fdc = figs.df_convergence_figure(res)
         if fdc is not None:
             st.caption(r"Convergence check: refit the $d_f$ slope dropping the smallest sizes. With no "
@@ -687,8 +684,16 @@ def show_results(res, label, key_prefix, meta=None):
                     r"measurable at these sizes), so $\nu$ is shown across the whole plausible band "
                     r"$\omega \in [0.5, 1.5]$: it stays consistent with $\tfrac{4}{3}$ for every $\omega$, "
                     r"and tracks the exact square/triangular lattices analysed identically.")
-        if st.checkbox("Compute ν(ω) band  (bootstraps 3 curves, a few seconds)", key=f"{key_prefix}_nucb"):
-            fnu = figs.nu_omega_figure(res, controls=_nu_controls(), B=60)
+        if st.checkbox("Compute ν(ω) band  (bootstraps 3 curves; ~30–40 s, computed once)",
+                       key=f"{key_prefix}_nucb"):
+            # The bootstrap is expensive (tens of seconds for a large run) and Streamlit reruns the
+            # whole script on every interaction / job poll -- recomputing each time froze the app. Cache
+            # the finished figure per result in session_state so it's built once, then reused instantly.
+            sk = f"{key_prefix}_nufig"
+            if sk not in st.session_state:
+                with st.spinner("Computing ν(ω) band (bootstrapping)…"):
+                    st.session_state[sk] = figs.nu_omega_figure(res, controls=_nu_controls(), B=60)
+            fnu = st.session_state[sk]
             if fnu is not None:
                 st.pyplot(fnu, width="content")
                 st.download_button("Download ν plot", _fig_bytes(fnu), mime="image/png",
@@ -714,7 +719,7 @@ def render_job_monitor(s):
     frac = (s.get("i", 0) / total) if total else 0.0
     st.progress(min(max(frac, 0.0), 1.0),
                 text=f"{state} — {s.get('i', 0)}/{total}  ·  {s.get('last_line', '')}")
-    live = state in ("launching", "building", "running", "finalising")
+    live = jobs.job_is_live(s)
     if live:
         c1, c2 = st.columns([1, 5])
         if c1.button("Stop", key=f"stop_{jid}"):
@@ -726,6 +731,15 @@ def render_job_monitor(s):
         # here -- this monitor renders inside the Percolate tab, and rerunning here would fire before
         # the later tabs (Analyse saved / Toy demo) get to draw, leaving them blank while a job runs.
         st.session_state["_poll_monitor"] = True
+    elif state in jobs.LIVE_STATES:
+        # Status says live but the worker process is gone -> it was killed mid-run (crash / machine
+        # powered off) and never flipped its status. Don't poll a corpse (that's what kept a dead job
+        # showing "running" forever and the Run button disabled); show it as interrupted.
+        st.warning("This run's worker is no longer alive — it was interrupted. Its checkpoint is kept, "
+                   "so relaunching the same settings resumes from where it stopped.")
+        if st.button("Dismiss", key=f"dis_{jid}"):
+            st.session_state.pop("active_job", None)
+            st.rerun()
     elif state == "error":
         st.error("Run failed.")
         st.code((s.get("error") or "")[:1200])
@@ -1027,14 +1041,13 @@ with tab_run:
     # Auto-reattach: if a run is still going (this tab was closed/reopened, or the server restarted),
     # pick it up so the progress bar comes right back.
     if not st.session_state.get("active_job"):
-        _live = [j for j in jobs.list_jobs()
-                 if j.get("status") in ("launching", "building", "running", "finalising")]
+        _live = [j for j in jobs.list_jobs() if jobs.job_is_live(j)]
         if _live:
             st.session_state["active_job"] = _live[0]["job_id"]
 
     active = st.session_state.get("active_job")
     _s = jobs.read_job_status(active) if active else None
-    _busy = bool(_s and _s.get("status") in ("launching", "building", "running", "finalising"))
+    _busy = bool(jobs.job_is_live(_s))
 
     want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
                            help="Largest-cluster pass: records the incipient-cluster size per trial -> the "
@@ -1074,8 +1087,11 @@ with tab_run:
         with st.expander(f"Background jobs ({len(others)})"):
             for j in others:
                 c0, c1, c2 = st.columns([4, 1, 1])
+                _stat = j.get("status", "?")
+                if _stat in jobs.LIVE_STATES and not jobs.job_is_live(j):
+                    _stat = "interrupted"     # worker gone; status never flipped
                 c0.write(f"**{j.get('member', '?')} · {j.get('kind', '')}** — "
-                         f"{j.get('status', '?')} ({j.get('i', 0)}/{j.get('total', 0)})")
+                         f"{_stat} ({j.get('i', 0)}/{j.get('total', 0)})")
                 if c1.button("Monitor", key=f"mon_{j['job_id']}"):
                     st.session_state["active_job"] = j["job_id"]
                     st.rerun()

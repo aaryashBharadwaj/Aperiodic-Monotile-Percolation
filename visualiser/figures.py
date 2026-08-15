@@ -5,7 +5,6 @@ that module stays focused on the numerics; these render Matplotlib Figures the U
     visualise(tiling, size, ...)      -> a rendered tiling Figure (+ optional graph overlay)
     fss_figure(result)                -> the I/U/A extrapolation plot (site & bond)
     convergence_figure(result)        -> per-size crossing estimate vs L (I & U)
-    df_figure(result)                 -> log-log <S_max> vs L (fractal dimension d_f), if recorded
 
 Shared primitives (resolve_member, the Penrose helpers, family_member, constants) are imported from
 interface.gui_backend; the dependency is one-way (gui_backend never imports this module).
@@ -178,38 +177,6 @@ def convergence_figure(result):
     return fig
 
 
-def df_figure(result):
-    """Log-log <S_max> vs L: the incipient spanning cluster's mass grows as L^{d_f}, so the slope on
-    log axes IS the fractal dimension. Shows the data, the fitted d_f line, and the exact 2D-percolation
-    reference (91/48). Returns a Figure, or None if the run has no exponent (s_max) data."""
-    e = result.get("exponents")
-    if e is None or result.get("raw_smax") is None:
-        return None
-    L = np.asarray(result["L"], float)
-    smax = [np.asarray(s, float) for s in result["raw_smax"]]
-    mean = np.array([s.mean() for s in smax])
-    se = np.array([s.std(ddof=1) / np.sqrt(len(s)) for s in smax])
-    d_f, (lo, hi) = e["d_f"], e["d_f_ci"]
-    logL = np.log(L); xl = np.array([L.min(), L.max()])
-    fig, ax = plt.subplots(figsize=(7, 5.5))
-    ax.errorbar(L, mean, yerr=se, fmt="o", color="#6a3d9a", ms=6, capsize=3, label=r"data  $\langle S_{\max}\rangle$")
-    a = np.mean(np.log(mean) - d_f * logL)                           # anchor the fitted slope to the data
-    ax.plot(xl, np.exp(a) * xl ** d_f, "-", color="#6a3d9a", lw=1.7,
-            label=f"fit:  $d_f$ = {d_f:.3f}  [{lo:.3f}, {hi:.3f}]")
-    DF2D = 91.0 / 48.0                                               # exact 2D percolation value
-    a2 = np.log(mean[-1]) - DF2D * logL[-1]
-    ax.plot(xl, np.exp(a2) * xl ** DF2D, "--", color="#888888", lw=1.4,
-            label=f"2D percolation:  91/48 = {DF2D:.4f}")
-    ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel(r"linear system size  $L$")
-    ax.set_ylabel(r"incipient cluster size  $\langle S_{\max}\rangle$")
-    ax.set_title(r"Fractal dimension:  $\langle S_{\max}\rangle \sim L^{d_f}$")
-    ax.grid(True, which="both", ls="--", alpha=0.35)
-    ax.legend(loc="best", fontsize=9)
-    fig.tight_layout()
-    return fig
-
-
 def df_convergence_figure(result, hmax=0.02):
     """Effective d_f vs L_min -- the assumption-free convergence test. Refit the slope of
     <S_max> ~ L^{d_f} over sizes L >= L_min for a sweep of cutoffs, WITHOUT imposing any corrections-to-
@@ -302,6 +269,9 @@ def nu_omega_figure(result, controls=None, omega_lo=0.5, omega_hi=1.5, n_omega=1
     ax.axhline(NU, color="#111", lw=1.5, zorder=1)
     ax.text(omega_hi + 0.005, NU, r"  $\nu=4/3$", va="center", fontsize=11, fontweight="bold")
     for (lab, cr), col in zip(controls or [], ["#5a8f69", "#c08a3e", "#9467bd"]):
+        Lc = np.asarray(cr.get("L", []), float)
+        if cr.get("raw_SI") is None or (Lc >= L_min).sum() < 4:
+            continue                       # control too thin at these sizes -> skip, don't crash curve()
         ln, lo, hi = curve(cr, seed + 1)
         ax.plot(omegas, ln, color=col, lw=1.6, ls="--", label=lab, zorder=2)
         ax.fill_between(omegas, lo, hi, color=col, alpha=0.12, zorder=1)
