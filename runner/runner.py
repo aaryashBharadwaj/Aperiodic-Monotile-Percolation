@@ -47,6 +47,11 @@ def main():
     ap.add_argument("--exponents", action="store_true",
                     help="also run the largest-cluster pass (records s_max/chi/histogram -> d_f, "
                          "gamma/nu, tau). Adds an extra sweep + O(N) snapshot per size (~+30%% time).")
+    ap.add_argument("--threads", type=int, default=0, metavar="N",
+                    help="number of trials to run concurrently (the parallel dimension is over "
+                         "independent trials, on nogil kernels -> real multi-core). 0 = auto "
+                         "(cpu_count-1). On a big box raise it; at very large L lower it, since peak "
+                         "RAM ~ threads x O(nodes).")
     args = ap.parse_args()
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # runner.py is in runner/
@@ -75,8 +80,11 @@ def main():
     total = len(Ls)
     started = time.time()
 
+    from engine.percolation import _NW
+    n_threads = args.threads if args.threads and args.threads > 0 else _NW
     print(f"[{member} / {kind}] patch={patch} L={args.lmin:g}..{args.lmax:g} step {args.gap:g} "
-          f"({total} sizes) T={args.trials} seed={args.seed}  (job {jid})", flush=True)
+          f"({total} sizes) T={args.trials} seed={args.seed}  threads={n_threads}  (job {jid})",
+          flush=True)
 
     def status(state, i, last_line="", result_file=None, error=None):
         jobs.write_status(jid, {
@@ -165,7 +173,8 @@ def main():
             L = Ls[i]
             try:
                 # stride 8 per size: offsets 0-3 = thresholds, 4 = exponents (seed_base+4), 5-7 spare.
-                step = gb.run_one(bundle, L, args.trials, args.seed + i * 8, bt, exponents=args.exponents)
+                step = gb.run_one(bundle, L, args.trials, args.seed + i * 8, bt,
+                                  exponents=args.exponents, nworkers=args.threads)
             except Exception as ex:
                 step = {"usable": False, "L": float(L), "err": str(ex)}
             if step.get("usable"):

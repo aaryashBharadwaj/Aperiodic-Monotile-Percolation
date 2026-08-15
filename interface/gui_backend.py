@@ -244,11 +244,17 @@ def _frame_usable(fd):
         len(fd["left_boundary_nodes"]), len(fd["right_boundary_nodes"])) > 0)
 
 
-def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False):
+def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
     """Percolate ONE L-window (the 4 estimators). Returns a dict; usable=False if the frame is empty
     or pokes outside the tiling. Factored out so the GUI can drive the sweep one size per rerun --
-    that's what makes it interruptible (a Stop button is processed between steps)."""
+    that's what makes it interruptible (a Stop button is processed between steps).
+
+    nworkers sets how many trials run concurrently (the parallel dimension is over independent trials,
+    on nogil numba kernels -> real multi-core). 0 = the engine default (cpu_count-1 / PERCOLATE_THREADS);
+    an explicit value is threaded through so the runner's --threads flag can dial it per run."""
     warm_up()
+    # 0 -> let each stats class fall back to its _NW default; a positive value overrides it.
+    nwkw = {"nworkers": int(nworkers)} if nworkers and int(nworkers) > 0 else {}
     # TODO(author): NEW -- inscribed-square cap with a 5% safety margin. bundle["side"] is the compact
     # filled core from largest_square_center; a window past it pokes into the ragged fringe (measured
     # off-tile AT L=side is ~0.1% hat / ~0.5% spectre via an independent point-in-polygon check, and it
@@ -268,22 +274,22 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False):
     E = (fd["sub_graph_nodes"], fd["sub_graph_edges"], fd["top_boundary_nodes"],
          fd["bottom_boundary_nodes"], fd["left_boundary_nodes"], fd["right_boundary_nodes"])
     # keep the intersection objects: pR/pD (site) and bond_pR/bond_pD validate the p_A estimators
-    si = percolationStatsI_par(*A, T, master_seed=seed_base + 0)
-    bi = percolationStatsBondI_par(*E, T, master_seed=seed_base + 2)
+    si = percolationStatsI_par(*A, T, master_seed=seed_base + 0, **nwkw)
+    bi = percolationStatsBondI_par(*E, T, master_seed=seed_base + 2, **nwkw)
     out = {"usable": True, "L": float(L), "N": fd["node_count"],
            "SI": si.trialResults, "pR": si.pR, "pD": si.pD,
-           "SU": percolationStatsU_par(*A, T, master_seed=seed_base + 1).trialResults,
+           "SU": percolationStatsU_par(*A, T, master_seed=seed_base + 1, **nwkw).trialResults,
            "BI": bi.trialResults, "bond_pR": bi.pR, "bond_pD": bi.pD,
-           "BU": percolationStatsBondU_par(*E, T, master_seed=seed_base + 3).trialResults}
+           "BU": percolationStatsBondU_par(*E, T, master_seed=seed_base + 3, **nwkw).trialResults}
     if exponents:
         # OPT-IN largest-cluster pass (extra sweep, s_max tracked incrementally): records the per-trial
         # largest cluster at first-spanning (the incipient infinite cluster) -> d_f. seed_base+4
         # keeps it independent of the four threshold seeds.
-        ex = percolationStatsExponents_par(*A, T, master_seed=seed_base + 4)
+        ex = percolationStatsExponents_par(*A, T, master_seed=seed_base + 4, **nwkw)
         out["s_max"] = ex.s_max        # union-onset s_max (d_f; original behaviour)
         out["s_max_i"] = ex.s_inter    # intersection-onset s_max (the d_f onset-definition bracket)
         # bond d_f (mass in sites): universal, so it cross-checks the site value. seed_base+5 (spare slot).
-        exb = percolationStatsBondExponents_par(*E, T, master_seed=seed_base + 5)
+        exb = percolationStatsBondExponents_par(*E, T, master_seed=seed_base + 5, **nwkw)
         out["bond_s_max"] = exb.s_max
         out["bond_s_max_i"] = exb.s_inter
     return out
