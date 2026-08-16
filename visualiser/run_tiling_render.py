@@ -97,7 +97,7 @@ def tiling_polygons(name, level=3, ncells=7):
     if name in ("comet", "chevron"):
         # Un-subdivided tile (the drawn outline; subdivision would change the orientation colour);
         # the block-stamping is shared with the percolation path via periodic_block.
-        from generators.family_geometry import tile_ab, periodic_block
+        from generators.chevron_and_comet import tile_ab, periodic_block
         a, b = (1.0, 0.0) if name == "comet" else (0.0, 1.0)
         return periodic_block(tile_ab(a, b), ncells)[0]
     raise ValueError(f"unknown tiling '{name}' (expected hat/spectre/comet/chevron)")
@@ -111,7 +111,7 @@ def _named(a, b, tol=0.04):
 
 
 def tile_ab_grid(a_values, b_values):
-    from generators.family_geometry import tile_ab
+    from generators.chevron_and_comet import tile_ab
     import matplotlib.patches as mpatches
     na, nb = len(a_values), len(b_values)
     fig, axes = plt.subplots(na, nb, figsize=(1.9 * nb, 1.9 * na))

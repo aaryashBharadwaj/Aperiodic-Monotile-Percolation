@@ -26,13 +26,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from builders.direct_graph_builder import build_neighbor_graph_fast, largest_square_center, graph_from_polygons
 from builders.dual_graph_builder import collect_leaf_polygons, build_dual_from_polygons
-from builders.graph_core import analyze_square_frame   # the one generic frame-cutter (direct AND dual)
+from builders.graph_core import analyze_square_frame, analyze_rect_frame   # frame-cutters (direct AND dual)
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
                          percolationStatsBondI_par, percolationStatsBondU_par,
                          percolationStatsExponents_par, percolationStatsBondExponents_par)
 from engine.analysis import extrapolate_pc_raw, isotropy_test, fit_exponents
 from visualiser.run_tiling_render import _threshold_class
-from generators.family_geometry import periodic_graph, periodic_polys
+from generators.chevron_and_comet import periodic_graph, periodic_polys
 from generators.periodic_tiling_generator import square_tiles, triangular_tris   # validated periodic geometry
 
 S3 = math.sqrt(3)
@@ -46,15 +46,17 @@ FIG_DIR = os.path.join(REPO_ROOT, "paper_results", "figures")    # rendered figu
 
 TRI = "Triangular → Honeycomb"          # the dual-of-triangular validation (exact honeycomb)
 FAMILY = "Tile(a,b) family"
+TILE11 = "Tile(1,1) periodic"           # periodic partner of the aperiodic Spectre (a=b, weakly chiral)
 
 # Every tiling the portal offers, grouped for the UI.
-TILINGS_MAIN = ["Hat", "Spectre", "Comet", "Chevron", FAMILY]
+TILINGS_MAIN = ["Hat", "Spectre", "Comet", "Chevron", TILE11, FAMILY]
 TILINGS_VALID = ["Square", "Penrose", TRI]
 TILINGS = TILINGS_MAIN + TILINGS_VALID
 GRAPHS = ["Direct (vertex)", "Dual (tile)"]
 
 CATEGORY = {"Hat": "Aperiodic monotile", "Spectre": "Aperiodic monotile",
             "Comet": "Periodic (family limit)", "Chevron": "Periodic (family limit)",
+            TILE11: "Periodic (a=b, weakly chiral)",
             FAMILY: "One-parameter family", "Square": "Validation (exact)",
             "Penrose": "Validation (aperiodic)", TRI: "Validation (triangular + honeycomb)"}
 
@@ -62,7 +64,7 @@ CATEGORY = {"Hat": "Aperiodic monotile", "Spectre": "Aperiodic monotile",
 # triangular tiling, so that one is dual-only. The square lattice is self-dual (both give a square
 # lattice), so it offers both.
 GRAPHS_FOR = {"Hat": GRAPHS, "Spectre": GRAPHS, "Comet": GRAPHS, "Chevron": GRAPHS,
-              "Square": GRAPHS, "Penrose": ["Direct (vertex)"], TRI: GRAPHS}
+              TILE11: GRAPHS, "Square": GRAPHS, "Penrose": ["Direct (vertex)"], TRI: GRAPHS}
 
 # Percolation patch control per tiling: (label, min, max, default, help). Hat/spectre go to the
 # production r=6 -- that's the headline result, it must be reachable here.
@@ -71,6 +73,7 @@ PATCH_CTL = {
     "Spectre": ("Patch level",        2, 6, 4, "Spectre substitution depth."),
     "Comet":   ("Block size  (cells)", 20, 160, 60, "Periodic block: cells per side (paper uses 150)."),
     "Chevron": ("Block size  (cells)", 20, 160, 60, "Periodic block: cells per side (paper uses 150)."),
+    TILE11:    ("Patch reach",         40, 1200, 200, "Periodic Tile(1,1): physical grow radius; the solid square window is ~0.7x this."),
     "Square":  ("Grid size  n",        20, 160, 60, "n x n square lattice (the textbook check: site 0.5927, bond 0.5)."),
     "Penrose": ("Subdivisions",        4, 9, 7, "Penrose inflation steps (more = finer graph). Deep, converged Penrose runs use the CLI (s=13)."),
     TRI:       ("Grid size  n",        20, 100, 60, "n x n triangular block: direct graph = the triangular lattice, dual = the honeycomb."),
@@ -82,6 +85,7 @@ RENDER_CTL = {
     "Spectre": ("Level",           1, 4, 3),
     "Comet":   ("Cells",           3, 14, 8),
     "Chevron": ("Cells",           3, 14, 8),
+    TILE11:    ("Reach",           8, 40, 16),
     "Square":  ("Grid n",          3, 20, 10),
     "Penrose": ("Subdivisions",    3, 6, 5),
     TRI:       ("Grid n",          4, 24, 12),
@@ -180,6 +184,15 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3, scale=None):
             coords, neighbors, _ = build_dual_from_polygons(polys)
         else:
             coords, neighbors, _span = periodic_graph(name.lower(), ncells=patch)
+    elif name == TILE11:
+        # Periodic Tile(1,1): patch = grow radius (reach). Same direct/dual builders as everything else;
+        # the tiling itself is built by edge-matching in generators/tile11_periodic (see that module).
+        from generators.tile11_periodic import tile11_polys, tile11_graph
+        if is_dual:
+            polys, _span = tile11_polys(patch)
+            coords, neighbors, _ = build_dual_from_polygons(polys)
+        else:
+            coords, neighbors, _span = tile11_graph(patch)
     elif name == "Penrose":
         from builders.penrose_graph_builder import build_penrose_neighbor_graph
         # patch = subdivisions (DENSITY); `scale` sets the physical EXTENT and MUST exceed the sweep's
@@ -293,6 +306,28 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
         out["bond_s_max"] = exb.s_max
         out["bond_s_max_i"] = exb.s_inter
     return out
+
+
+def run_crossing(bundle, W, H, T, seed_base, bt=1.0, nworkers=0):
+    """Percolate ONE rectangular W x H window and return the per-trial left-right spanning onset
+    densities. This is what the Cardy crossing test needs: it mirrors run_one but cuts a RECTANGLE
+    (aspect a = W/H) and returns the raw left-right crossings (pR) rather than the p_c estimators.
+    usable=False if the frame is empty or the rectangle pokes outside the tiling's solid core."""
+    warm_up()
+    side = bundle.get("side")
+    # the rectangle must sit inside the solid inscribed square; cap on its larger half-extent
+    if side is not None and max(W, H) > 0.95 * side + 1e-9:
+        return {"usable": False}
+    cx, cy = bundle["center"]
+    fd = analyze_rect_frame(bundle["coords"], bundle["neighbors"], W, H, boundary_thickness=bt,
+                            center_x=cx, center_y=cy)
+    if not _frame_usable(fd):
+        return {"usable": False}
+    A = (fd["sub_graph_nodes"], fd["sub_graph_neighbors"], fd["top_boundary_nodes"],
+         fd["bottom_boundary_nodes"], fd["left_boundary_nodes"], fd["right_boundary_nodes"])
+    nwkw = {"nworkers": int(nworkers)} if nworkers and int(nworkers) > 0 else {}
+    si = percolationStatsI_par(*A, T, master_seed=seed_base, **nwkw)   # pR = left-right onset density
+    return {"usable": True, "N": fd["node_count"], "W": float(W), "H": float(H), "pR": si.pR}
 
 
 def _pick_lmin(valid, floor=50):

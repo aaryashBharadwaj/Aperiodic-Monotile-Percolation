@@ -18,10 +18,10 @@ from matplotlib.collections import LineCollection
 from builders.direct_graph_builder import graph_from_polygons
 from builders.dual_graph_builder import build_dual_from_polygons
 from visualiser.run_tiling_render import tiling_polygons, render_tiling, _threshold_class
-from generators.family_geometry import tile_ab
+from generators.chevron_and_comet import tile_ab
 from generators.periodic_tiling_generator import square_tiles, triangular_tris
 from interface.gui_backend import (resolve_member, family_member, _penrose_tiling, _penrose_polys,
-                                    S3, NU, TRI, FAMILY)
+                                    S3, NU, TRI, FAMILY, TILE11)
 
 
 # ----------------------------------------------------------------------------- visualise engine
@@ -33,6 +33,12 @@ def _render_polys(tiling, size, a=1.0, b=S3):
         polys = tiling_polygons(name.lower(), level=size, ncells=size)
         color_by = "chirality" if name == "Hat" else "orientation"
         return polys, f"{name}  ({len(polys)} tiles)", color_by, None
+    if name == TILE11:
+        from generators.tile11_periodic import tile11_polys
+        polys, _ = tile11_polys(size)          # size = grow reach (RENDER_CTL keeps it small/legible)
+        # chirality (not orientation): the tiling is A vs its mirror B, so the signed-area sign splits
+        # them into two clean colours -- the twilight-by-angle 'orientation' map just muddied them.
+        return polys, f"Tile(1,1) periodic  ({len(polys)} tiles)", "chirality", None
     if name == "Square":
         polys = square_tiles(size)
         return polys, f"Square  ({len(polys)} tiles)", None, None
@@ -287,6 +293,35 @@ def nu_omega_figure(result, controls=None, omega_lo=0.5, omega_hi=1.5, n_omega=1
     ax.set_title(r"$\nu$ vs assumed $\omega$ — consistent with 4/3 across the whole band")
     ax.grid(alpha=0.15)
     ax.legend(loc="lower right", frameon=False, fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def cardy_figure(result):
+    """Left-right crossing probability vs rectangle aspect ratio, measured (one series per window size,
+    anchored at the square's 1/2-crossing) against Cardy's exact 2D-percolation curve. As the window
+    grows the points converge onto the curve -- the conformal-invariance fingerprint of the class.
+    `result` keys: aspects, windows, Rh (n_windows x n_aspects). Returns a Figure, or None if empty."""
+    from engine.cardy import cardy_pi_h
+    aspects = np.asarray(result["aspects"], float)
+    Rh = np.atleast_2d(np.asarray(result["Rh"], float))
+    windows = np.asarray(result["windows"], float)
+    if aspects.size == 0 or Rh.size == 0:
+        return None
+    ac = np.linspace(aspects.min() * 0.85, aspects.max() * 1.1, 220)
+    fig, ax = plt.subplots(figsize=(7.2, 5.2))
+    ax.plot(ac, [cardy_pi_h(a) for a in ac], "-", color="#222", lw=2,
+            label="Cardy (exact 2D percolation)")
+    n = max(1, len(windows) - 1)
+    for i, L in enumerate(windows):
+        ax.plot(aspects, Rh[i], "o", ms=6, color=plt.cm.viridis(i / n), label=f"L = {L:.0f}")
+    ax.axhline(0.5, color="#bbb", ls=":", lw=1)
+    ax.axvline(1.0, color="#bbb", ls=":", lw=1)
+    ax.set_xlabel(r"aspect ratio  $a = W/H$")
+    ax.set_ylabel(r"crossing probability  $R_h$")
+    ax.set_title(r"Crossing probability vs Cardy's formula")
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.2)
     fig.tight_layout()
     return fig
 
