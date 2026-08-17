@@ -583,4 +583,18 @@ def paper_preset(member, kind):
         side = ge[1] if ge else 300.0
         Lmax = int(side * 0.95 // 10 * 10)
         return {"patch": 150, "L_min": 20.0, "L_max": float(Lmax), "gap": 20.0, "T": 500, "seed": seed}
+    if member in (COMET_AP, CHEVRON_AP):
+        # Aperiodic endpoints (folded hat): inflation model, like Spectre. Direct and dual have
+        # different solid squares, so cap L_max at the SMALLER so both graphs span the same window.
+        sides = [geometry(member, k, 6) for k in ("direct", "dual")]
+        side = min([s[1] for s in sides if s], default=300.0)
+        Lmax = int((side * 0.92) // 10 * 10)
+        gap = max(10.0, round(Lmax / 40 / 10) * 10)
+        return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
+    if member == TILE11:
+        ge = geometry(member, "direct", 200)
+        side = ge[1] if ge else 140.0
+        Lmax = int(side * 0.92 // 10 * 10)
+        gap = max(10.0, round(Lmax / 30 / 10) * 10)
+        return {"patch": 200, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 500, "seed": seed}
     return None

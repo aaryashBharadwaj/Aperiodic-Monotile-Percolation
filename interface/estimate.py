@@ -17,7 +17,7 @@ import json
 import time
 
 from interface.gui_backend import (REPO_ROOT, build_graph, run_one, warm_up, _frame_data,
-                                    default_bt, TRI, LAUNCH_OVERHEAD_S)
+                                    default_bt, TRI, TILE11, COMET_AP, CHEVRON_AP, LAUNCH_OVERHEAD_S)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))                 # this interface/ folder (the GUI's config lives beside it)
 CALIB_PATH = os.path.join(_HERE, "gui_calib.json")                 # machine-dependent: per-trial cost (gitignored)
@@ -111,8 +111,9 @@ def calibrate_geometry(save=True):
     Machine-independent (pure geometry) -- run once and ship it. Stores whole-patch density (for the
     node-count readout) and the true in-frame node density (for the ETA)."""
     G = {}
-    # Hat / spectre: inflation model. Build r=2..4 (cheap); densities constant, side grows by lambda.
-    for member in ("Hat", "Spectre"):
+    # Hat / spectre / aperiodic comet+chevron: inflation model. Build r=2..4 (cheap); densities
+    # constant, side grows by lambda. (The folded comet/chevron are the hat's arrangement, so same model.)
+    for member in ("Hat", "Spectre", COMET_AP, CHEVRON_AP):
         for kind in ("direct", "dual"):
             tbl = {}; frame_dens = 0.0; build_cpn = 0.0
             for r in (2, 3, 4):
@@ -134,7 +135,8 @@ def calibrate_geometry(save=True):
     # Periodic / triangular: block grows linearly with the cell count; densities constant.
     for member, kind in [("Comet", "direct"), ("Comet", "dual"), ("Chevron", "direct"),
                          ("Chevron", "dual"), (TRI, "direct"), (TRI, "dual"),
-                         ("Square", "direct"), ("Square", "dual")]:
+                         ("Square", "direct"), ("Square", "dual"),
+                         (TILE11, "direct"), (TILE11, "dual")]:
         n1, s1, f1, _b1 = _measure_geom(member, kind, 40)
         n2, s2, f2, b2 = _measure_geom(member, kind, 70)
         G[f"{member}|{kind}"] = {"model": "linear", "k": 0.5 * (s1 / 40 + s2 / 70),
