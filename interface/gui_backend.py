@@ -47,15 +47,18 @@ FIG_DIR = os.path.join(REPO_ROOT, "paper_results", "figures")    # rendered figu
 TRI = "Triangular → Honeycomb"          # the dual-of-triangular validation (exact honeycomb)
 FAMILY = "Tile(a,b) family"
 TILE11 = "Tile(1,1) periodic"           # periodic partner of the aperiodic Spectre (a=b, weakly chiral)
+COMET_AP = "Comet aperiodic"            # hat's aperiodic arrangement folded to Tile(1,0)
+CHEVRON_AP = "Chevron aperiodic"        # hat's aperiodic arrangement folded to Tile(0,1)
 
 # Every tiling the portal offers, grouped for the UI.
-TILINGS_MAIN = ["Hat", "Spectre", "Comet", "Chevron", TILE11, FAMILY]
+TILINGS_MAIN = ["Hat", "Spectre", "Comet", "Chevron", COMET_AP, CHEVRON_AP, TILE11, FAMILY]
 TILINGS_VALID = ["Square", "Penrose", TRI]
 TILINGS = TILINGS_MAIN + TILINGS_VALID
 GRAPHS = ["Direct (vertex)", "Dual (tile)"]
 
 CATEGORY = {"Hat": "Aperiodic monotile", "Spectre": "Aperiodic monotile",
             "Comet": "Periodic (family limit)", "Chevron": "Periodic (family limit)",
+            COMET_AP: "Aperiodic (family endpoint)", CHEVRON_AP: "Aperiodic (family endpoint)",
             TILE11: "Periodic (a=b, weakly chiral)",
             FAMILY: "One-parameter family", "Square": "Validation (exact)",
             "Penrose": "Validation (aperiodic)", TRI: "Validation (triangular + honeycomb)"}
@@ -64,6 +67,7 @@ CATEGORY = {"Hat": "Aperiodic monotile", "Spectre": "Aperiodic monotile",
 # triangular tiling, so that one is dual-only. The square lattice is self-dual (both give a square
 # lattice), so it offers both.
 GRAPHS_FOR = {"Hat": GRAPHS, "Spectre": GRAPHS, "Comet": GRAPHS, "Chevron": GRAPHS,
+              COMET_AP: GRAPHS, CHEVRON_AP: GRAPHS,
               TILE11: GRAPHS, "Square": GRAPHS, "Penrose": ["Direct (vertex)"], TRI: GRAPHS}
 
 # Percolation patch control per tiling: (label, min, max, default, help). Hat/spectre go to the
@@ -73,6 +77,8 @@ PATCH_CTL = {
     "Spectre": ("Patch level",        2, 6, 4, "Spectre substitution depth."),
     "Comet":   ("Block size  (cells)", 20, 160, 60, "Periodic block: cells per side (paper uses 150)."),
     "Chevron": ("Block size  (cells)", 20, 160, 60, "Periodic block: cells per side (paper uses 150)."),
+    COMET_AP:  ("Patch recursion  r", 2, 6, 4, "Hat metatile depth, folded to the comet endpoint (Tile(1,0)). r=6 is heavy (~1M+ nodes)."),
+    CHEVRON_AP:("Patch recursion  r", 2, 6, 4, "Hat metatile depth, folded to the chevron endpoint (Tile(0,1)). r=6 is heavy (~1M+ nodes)."),
     TILE11:    ("Patch reach",         40, 1200, 200, "Periodic Tile(1,1): physical grow radius; the solid square window is ~0.7x this."),
     "Square":  ("Grid size  n",        20, 160, 60, "n x n square lattice (the textbook check: site 0.5927, bond 0.5)."),
     "Penrose": ("Subdivisions",        4, 9, 7, "Penrose inflation steps (more = finer graph). Deep, converged Penrose runs use the CLI (s=13)."),
@@ -85,6 +91,8 @@ RENDER_CTL = {
     "Spectre": ("Level",           1, 4, 3),
     "Comet":   ("Cells",           3, 14, 8),
     "Chevron": ("Cells",           3, 14, 8),
+    COMET_AP:  ("Inflation level", 1, 4, 2),
+    CHEVRON_AP:("Inflation level", 1, 4, 2),
     TILE11:    ("Reach",           8, 40, 16),
     "Square":  ("Grid n",          3, 20, 10),
     "Penrose": ("Subdivisions",    3, 6, 5),
@@ -184,6 +192,16 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3, scale=None):
             coords, neighbors, _ = build_dual_from_polygons(polys)
         else:
             coords, neighbors, _span = periodic_graph(name.lower(), ncells=patch)
+    elif name in (COMET_AP, CHEVRON_AP):
+        # Aperiodic comet/chevron: the hat's aperiodic arrangement FOLDED to the family endpoint
+        # (generators/aperiodic_collapse). patch = hat metatile depth. Direct/dual come out of the
+        # shared builders once the collapsed-edge endpoints de-dup. The dual nodes are tile centroids,
+        # so (like the hat/spectre dual) centre the window on the tile VERTICES, not the centroids.
+        from generators.aperiodic_collapse import collapse_graph
+        which = "comet" if name == COMET_AP else "chevron"
+        coords, neighbors, polys = collapse_graph(which, "dual" if is_dual else "direct", patch)
+        if is_dual:
+            center_src = polys
     elif name == TILE11:
         # Periodic Tile(1,1): patch = grow radius (reach). Same direct/dual builders as everything else;
         # the tiling itself is built by edge-matching in generators/tile11_periodic (see that module).
@@ -330,6 +348,37 @@ def run_crossing(bundle, W, H, T, seed_base, bt=1.0, nworkers=0):
     return {"usable": True, "N": fd["node_count"], "W": float(W), "H": float(H), "pR": si.pR}
 
 
+def run_cardy(bundle, windows, n_aspects=20, aspect_min=0.5, aspect_max=2.0,
+              T=4000, seed=123456789, bt=1.0, nworkers=0):
+    """Cardy crossing-probability test on a pre-built bundle (same engine the CLI cardy_runner uses).
+    For each window size L: anchor at the p where the SQUARE crosses at 1/2 (p* = median onset), then
+    read the left-right crossing probability at each aspect ratio a = W/H (W=L*sqrt(a), H=L/sqrt(a),
+    area = L^2) at that same p*. Those are free predictions Cardy's exact curve must reproduce.
+    Returns the dict cardy_figure/analysis consume: {aspects, cardy, windows, Rh, pstar, trials,
+    noise_floor}. Windows too big for the patch are skipped."""
+    from engine.cardy import cardy_pi_h, crossing_probability
+    aspects = np.round(np.geomspace(aspect_min, aspect_max, int(n_aspects)), 4)
+    cardy = np.array([cardy_pi_h(a) for a in aspects])
+    floor = float(np.sqrt(0.25 / max(1, T)))
+    windows_done, Rh_rows, pstar_list, rms_list = [], [], [], []
+    for wi, L in enumerate(windows):
+        sq = run_crossing(bundle, L, L, T, seed + wi * 1000, bt, nworkers=nworkers)
+        if not sq.get("usable"):
+            continue
+        pstar = float(np.median(np.asarray(sq["pR"], float)))
+        Rh = np.full(len(aspects), np.nan)
+        for ai, asp in enumerate(aspects):
+            r = run_crossing(bundle, L * np.sqrt(asp), L / np.sqrt(asp), T,
+                             seed + wi * 1000 + ai + 1, bt, nworkers=nworkers)
+            if r.get("usable"):
+                Rh[ai] = crossing_probability(r["pR"], pstar)
+        windows_done.append(float(L)); Rh_rows.append(Rh); pstar_list.append(pstar)
+        rms_list.append(float(np.sqrt(np.nanmean((Rh - cardy) ** 2))))
+    return {"aspects": aspects, "cardy": cardy, "windows": np.array(windows_done, float),
+            "Rh": np.array(Rh_rows, float), "pstar": np.array(pstar_list, float),
+            "rms": np.array(rms_list, float), "trials": int(T), "noise_floor": floor}
+
+
 def _pick_lmin(valid, floor=50):
     """Use L_min=floor (the paper's cutoff) for the direction-bias fit if it leaves >=3 sizes; else 0
     (use all), since exploratory GUI sweeps often don't reach L=50 with enough points."""
@@ -418,6 +467,20 @@ def save_result(result, member, kind, seed, T, name=None, out_dir=RESULTS_DIR):
                        raw_bond_smax_inter=result.get("raw_bond_smax_inter"),
                        extra_meta={"source": "gui"}).save(path)
     return path
+
+
+def delete_result(fname, out_dir=None):
+    """Remove a saved result and its _iso/_exp sidecars from disk -- the GUI 'discard' path for an
+    exploratory run the user didn't ask to keep. Silently ignores anything already gone."""
+    base = out_dir or RESULTS_DIR
+    targets = [fname, fname[:-4] + "_iso.npz", fname[:-4] + "_exp.npz"]
+    for t in targets:
+        p = os.path.join(base, t)
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
 
 
 def list_saved(out_dir=None):

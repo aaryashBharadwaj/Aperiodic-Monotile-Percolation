@@ -21,7 +21,7 @@ from visualiser.run_tiling_render import tiling_polygons, render_tiling, _thresh
 from generators.chevron_and_comet import tile_ab
 from generators.periodic_tiling_generator import square_tiles, triangular_tris
 from interface.gui_backend import (resolve_member, family_member, _penrose_tiling, _penrose_polys,
-                                    S3, NU, TRI, FAMILY, TILE11)
+                                    S3, NU, TRI, FAMILY, TILE11, COMET_AP, CHEVRON_AP)
 
 
 # ----------------------------------------------------------------------------- visualise engine
@@ -33,6 +33,11 @@ def _render_polys(tiling, size, a=1.0, b=S3):
         polys = tiling_polygons(name.lower(), level=size, ncells=size)
         color_by = "chirality" if name == "Hat" else "orientation"
         return polys, f"{name}  ({len(polys)} tiles)", color_by, None
+    if name in (COMET_AP, CHEVRON_AP):
+        from generators.aperiodic_collapse import collapse_polys
+        which = "comet" if name == COMET_AP else "chevron"
+        polys = collapse_polys(which, size)    # size = hat inflation depth (RENDER_CTL keeps it small)
+        return polys, f"{name}  ({len(polys)} tiles)", "chirality", None
     if name == TILE11:
         from generators.tile11_periodic import tile11_polys
         polys, _ = tile11_polys(size)          # size = grow reach (RENDER_CTL keeps it small/legible)

@@ -747,21 +747,40 @@ def render_job_monitor(s):
             st.session_state.pop("active_job", None)
             st.rerun()
     else:   # done | stopped
-        if state == "stopped":
-            st.warning("Stopped early — the partial result was saved.")
-        else:
-            st.success("✓ Complete — result saved automatically.")
+        keep = st.session_state.get(f"keep_{jid}", True)
+        verb = "partial result" if state == "stopped" else "result"
+        (st.warning if state == "stopped" else st.success)(
+            f"✓ Complete — {verb} saved." if keep else
+            f"✓ Complete — exploratory run (the {verb} shows below, but was not saved to disk).")
         rf = s.get("result_file")
         if rf:
-            try:
-                res, meta = gb.load_saved(rf)
-                show_results(res, meta["member"], "job", meta=meta)
-                st.caption(f"Saved as paper_results/npz/{rf}")
-            except Exception as e:
-                st.error(f"Saved but could not load {rf}: {e}")
+            # Load ONCE and cache in session: we may delete the file (discard), and Streamlit reruns
+            # this block on every poll, so subsequent renders must come from the in-memory copy.
+            rkey = f"jobres_{jid}"
+            if rkey not in st.session_state:
+                try:
+                    st.session_state[rkey] = gb.load_saved(rf)
+                    if not keep:
+                        gb.delete_result(rf)              # exploratory: drop it from disk, keep in memory
+                except Exception as e:
+                    st.session_state[rkey] = None
+                    st.error(f"Run completed and saved, but the file could not be loaded: {e}")
+            stored = st.session_state.get(rkey)
+            if stored:
+                res, meta = stored
+                try:
+                    show_results(res, meta["member"], "job", meta=meta)
+                except Exception as e:
+                    # The result is fine; a PLOT failed to render (e.g. the known transient matplotlib
+                    # mathtext race under background threads). Say so honestly instead of "could not load".
+                    st.error(f"Result computed correctly, but a plot failed to render "
+                             f"(likely a transient rendering hiccup — rerun to redraw): {e}")
+                st.caption(f"Saved as paper_results/npz/{rf}" if keep
+                           else "🗑 Not saved (exploratory run — tick 'Save this run to results' to keep).")
         else:
             st.info("No result file (fewer than 3 usable sizes).")
         if st.button("Clear this run", key=f"clrdone_{jid}"):
+            st.session_state.pop(f"jobres_{jid}", None)
             st.session_state.pop("active_job", None)
             st.rerun()
 
@@ -814,8 +833,8 @@ runnable = member is not None
 if not runnable:
     st.stop()
 
-tab_vis, tab_run, tab_analyse, tab_toy = st.tabs(
-    ["Visualise", "Percolate", "Analyse saved", "Toy demo"])
+tab_vis, tab_run, tab_cardy, tab_analyse, tab_toy = st.tabs(
+    ["Visualise", "Percolate", "Crossing (Cardy)", "Analyse saved", "Toy demo"])
 
 # ============================================================ TOY DEMO (percolation walk-through)
 with tab_toy:
@@ -1054,14 +1073,19 @@ with tab_run:
                                 "fractal dimension d_f (<s_max> ~ L^d_f), one of the two exponents that "
                                 "fix the universality class. Off by default to keep runs fast; the "
                                 "paper's universality runs turn it on.")
+    want_save = st.checkbox("Save this run to results", value=True,
+                            help="On (default): the result is kept in paper_results/npz/. Off: an "
+                                 "exploratory run — it still computes and displays, but is discarded "
+                                 "from disk when done, so the results folder stays an intentional record.")
     if st.button("Run percolation", type="primary", disabled=(n_used < 3) or _busy):
         jid = jobs.launch_job(tiling, member, graph_type, kind, patch, round(a, 3), round(b, 3),
                             L_min, L_max, gap, int(T), int(seed), exponents=want_exp)
+        st.session_state[f"keep_{jid}"] = bool(want_save)   # GUI-side keep/discard decision
         st.session_state["active_job"] = jid
         st.rerun()
     if not _busy:
         st.caption("Launches a background process — it keeps running if you close the tab or the "
-                   "machine sleeps. Result auto-saves to paper_results/npz/ when done.")
+                   "machine sleeps. Kept runs save to paper_results/npz/ when done.")
 
     # The exact console command for the current settings — the Run button just launches this. Handy
     # for a headless box, a machine you won't keep the browser open on, or scripting a batch.
@@ -1104,6 +1128,79 @@ with tab_run:
         render_job_monitor(_s)
     elif active and _s is None:
         st.session_state.pop("active_job", None)   # stale reference; forget it
+
+
+# ============================================================ CARDY CROSSING TEST
+with tab_cardy:
+    st.subheader(f"Crossing (Cardy) — {member} · {graph_type.split()[0].lower()} graph")
+    st.caption("Conformal-invariance test: at criticality the left–right crossing probability of a "
+               "rectangle depends only on its aspect ratio. We anchor at the square's ½-crossing, then "
+               "compare the other aspect ratios to Cardy's exact 2D-percolation curve. A separate "
+               "experiment from the p_c sweep (rectangles, not one L×L square). (Explainer TBD.)")
+
+    ckind = "dual" if graph_type.startswith("Dual") else "direct"
+    cplabel, cplo, cphi, cpdflt, cphelp = gb.PATCH_CTL[member]
+    cpk = f"cardy_patch_{member}"
+    st.session_state.setdefault(cpk, cpdflt)
+    cpatch = st.slider(cplabel, cplo, cphi, key=cpk, help=cphelp)
+    cge = estimate.geometry(member, ckind, cpatch)
+    cusable = (cge[1] * 0.9) if cge else None
+    if cusable:
+        st.caption(f"Largest usable window ≈ **{cusable:.0f}** for this patch "
+                   "(bigger rectangles fall outside the tiling and are skipped).")
+
+    st.session_state.setdefault("cardy_windows",
+                                f"{cusable*0.35:.0f}, {cusable*0.6:.0f}" if cusable else "80, 140")
+    cc1, cc2 = st.columns([2, 1])
+    windows_txt = cc1.text_input("Window sizes L (comma-separated)", key="cardy_windows",
+                                 help="Each window runs a square (the anchor) plus the aspect-ratio "
+                                      "sweep at fixed area L². Several windows show the finite-size "
+                                      "deviation shrinking.")
+    st.session_state.setdefault("cardy_naspect", 15)
+    n_aspects = cc2.number_input("Aspect ratios", min_value=5, max_value=40, step=1, key="cardy_naspect")
+    cc3, cc4, cc5 = st.columns(3)
+    st.session_state.setdefault("cardy_amin", 0.5)
+    st.session_state.setdefault("cardy_amax", 2.0)
+    st.session_state.setdefault("cardy_T", 4000)
+    amin = cc3.number_input("Aspect min", min_value=0.2, max_value=1.0, step=0.1, key="cardy_amin")
+    amax = cc4.number_input("Aspect max", min_value=1.0, max_value=5.0, step=0.1, key="cardy_amax")
+    cT = cc5.number_input("Trials / rectangle", min_value=200, max_value=20000, step=500, key="cardy_T",
+                          help="Crossing probability needs high T (noise floor ~ √(1/4T)); ~4000+ for "
+                               "a clean curve. Runs inline — heavy sweeps are better via the CLI "
+                               "cardy_runner.")
+
+    if st.button("Run Cardy test", key="cardy_run", type="primary"):
+        try:
+            windows = [float(x) for x in windows_txt.replace(";", ",").split(",") if x.strip()]
+        except ValueError:
+            windows = []
+        if not windows:
+            st.error("Enter one or more numeric window sizes, e.g. 80, 140.")
+        else:
+            with st.spinner(f"Building {member} · {ckind} and running Cardy "
+                            f"({len(windows)} windows × {int(n_aspects)} aspects × {int(cT)} trials)…"):
+                _bundle = gb.build_graph(member, graph_type, cpatch)
+                st.session_state["cardy_result"] = gb.run_cardy(
+                    _bundle, windows, n_aspects=int(n_aspects), aspect_min=float(amin),
+                    aspect_max=float(amax), T=int(cT), bt=gb.default_bt(member))
+                st.session_state["cardy_result_label"] = f"{member} · {ckind}"
+
+    cres = st.session_state.get("cardy_result")
+    if cres is not None and len(cres["windows"]):
+        st.caption(f"Result: {st.session_state.get('cardy_result_label', '')}")
+        cfig = figs.cardy_figure(cres)
+        if cfig is not None:
+            st.pyplot(cfig, width="content")
+            st.download_button("Download Cardy plot", _fig_bytes(cfig), mime="image/png",
+                               file_name=f"{member}_cardy.png", key="cardy_dl")
+        floor = cres["noise_floor"]
+        for i, L in enumerate(cres["windows"]):
+            rms = float(cres["rms"][i])
+            flag = "✓ at the noise floor" if rms <= 1.5 * floor else "systematic above floor"
+            st.write(f"**L = {L:.0f}**  ·  anchor p\\* = {cres['pstar'][i]:.4f}  ·  "
+                     f"RMS(R_h − Cardy) = {rms:.4f}  (noise floor {floor:.4f}) — {flag}")
+    elif cres is not None:
+        st.warning("No usable windows — all were too large for this patch. Try smaller window sizes.")
 
 
 # ============================================================ ANALYSE SAVED
