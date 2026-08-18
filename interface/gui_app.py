@@ -993,9 +993,12 @@ with tab_run:
         # Size + ETA come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing even the
         # r=6 patch is instant. The (heavy) build happens only when you hit Run.
         ge = estimate.geometry(member, kind, patch)
-        usable_max = (ge[1] * 0.9) if ge else 200.0
+        usable_max = (ge[1] * 0.95) if ge else 200.0   # match the runner's real window cap (0.95 x solid side)
         st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
-                   "(bigger windows fall outside the tiling and are skipped).")
+                   "(bigger windows fall outside the tiling and are skipped). The frame is capped at "
+                   "0.95× the largest solid square — conservative, to stay clear of the ragged patch "
+                   "edge. `tests/verify_solid_windows.py` confirms the frame is fully tiled (0% off-tile) "
+                   "and can justify a larger window if you want the extra sizes.")
 
         st.markdown("**Parameters**")
         st.session_state.setdefault("perc_lmin", 10.0)

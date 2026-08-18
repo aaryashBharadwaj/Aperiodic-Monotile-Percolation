@@ -199,7 +199,7 @@ def plan_run(member, kind, patch, L_values, T, calib=None):
     if not g or ge is None:
         return None
     nodes_est, side = ge
-    usable_max = 0.9 * side
+    usable_max = 0.95 * side   # the runner keeps windows up to 0.95 x the solid side
     usable = [L for L in L_values if L <= usable_max]
     calib = calib or load_calib()
     density = _frame_density(g, patch)
@@ -233,7 +233,7 @@ def accuracy_estimate(member, kind, patch, L_values, T):
     if not ge:
         return "—"
     side = ge[1]
-    usable = [L for L in L_values if L <= 0.9 * side]
+    usable = [L for L in L_values if L <= 0.95 * side]
     if len(usable) < 3:
         return "—"
     Lmax = max(usable)

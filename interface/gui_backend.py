@@ -568,33 +568,40 @@ def paper_preset(member, kind):
     from interface.estimate import geometry   # lazy: estimate imports gui_backend, so keep this off module load
     seed = 123456789
     if member == "Hat":
-        return {"patch": 6, "L_min": 10.0, "L_max": 1000.0, "gap": 10.0, "T": 1000, "seed": seed}
+        # L_max derived from 0.95 x solid side like every member (was hardcoded 1000, which exceeded the
+        # window cap and made the GUI flag its own preset). At r=6 this is ~970.
+        sides = [geometry("Hat", k, 6) for k in ("direct", "dual")]
+        side = min([s[1] for s in sides if s], default=1050.0)
+        Lmax = int((side * 0.95) // 10 * 10)
+        return {"patch": 6, "L_min": 10.0, "L_max": float(Lmax), "gap": 10.0, "T": 1000, "seed": seed}
     if member == "Spectre":
         # Direct and dual MUST span the same physical window -- comparing p_c across the two graphs only
         # means anything on a shared extent. The two node clouds give different solid squares, so cap L_max
         # at the SMALLER (the tighter ceiling binds both); this makes the preset kind-independent.
         sides = [geometry("Spectre", k, 6) for k in ("direct", "dual")]
         side = min([s[1] for s in sides if s], default=400.0)
-        Lmax = int((side * 0.92) // 10 * 10)
+        Lmax = int((side * 0.95) // 10 * 10)   # uniform 0.95 x solid side (the runner's window cap)
         gap = max(10.0, round(Lmax / 40 / 10) * 10)
-        return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 500, "seed": seed}
+        # T=1000 (not 500): the spectre is a headline aperiodic result and must read to 4 dp like the hat.
+        return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
     if member in ("Comet", "Chevron"):
-        ge = geometry(member, kind, 150)
+        # 420-cell block so the solid window reaches L~300 (0.95 x side) -> 4 dp, matching the family; still cheap.
+        ge = geometry(member, kind, 420)
         side = ge[1] if ge else 300.0
         Lmax = int(side * 0.95 // 10 * 10)
-        return {"patch": 150, "L_min": 20.0, "L_max": float(Lmax), "gap": 20.0, "T": 500, "seed": seed}
+        return {"patch": 420, "L_min": 20.0, "L_max": float(Lmax), "gap": 20.0, "T": 1000, "seed": seed}
     if member in (COMET_AP, CHEVRON_AP):
         # Aperiodic endpoints (folded hat): inflation model, like Spectre. Direct and dual have
         # different solid squares, so cap L_max at the SMALLER so both graphs span the same window.
         sides = [geometry(member, k, 6) for k in ("direct", "dual")]
         side = min([s[1] for s in sides if s], default=300.0)
-        Lmax = int((side * 0.92) // 10 * 10)
+        Lmax = int((side * 0.95) // 10 * 10)   # uniform 0.95 x solid side
         gap = max(10.0, round(Lmax / 40 / 10) * 10)
         return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
     if member == TILE11:
-        ge = geometry(member, "direct", 200)
+        ge = geometry(member, "direct", 215)
         side = ge[1] if ge else 140.0
-        Lmax = int(side * 0.92 // 10 * 10)
+        Lmax = int(side * 0.95 // 10 * 10)     # uniform 0.95 x solid side
         gap = max(10.0, round(Lmax / 30 / 10) * 10)
-        return {"patch": 200, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 500, "seed": seed}
+        return {"patch": 215, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
     return None
