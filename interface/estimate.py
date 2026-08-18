@@ -111,19 +111,21 @@ def calibrate_geometry(save=True):
     Machine-independent (pure geometry) -- run once and ship it. Stores whole-patch density (for the
     node-count readout) and the true in-frame node density (for the ETA)."""
     G = {}
-    # Hat / spectre / aperiodic comet+chevron: inflation model. Build r=2..4 (cheap); densities
-    # constant, side grows by lambda. (The folded comet/chevron are the hat's arrangement, so same model.)
+    # Hat / spectre / aperiodic comet+chevron: inflation model. Build r=2..5; densities constant, side
+    # grows by lambda. lambda is fit from the TWO LARGEST built patches (r=4->5), NOT small ones -- the
+    # small-patch ratio undershoots the asymptotic inflation factor, and extrapolating it two levels to
+    # the production r=6 compounds the error badly (e.g. spectre was -57%). One step from r=5 is accurate.
     for member in ("Hat", "Spectre", COMET_AP, CHEVRON_AP):
         for kind in ("direct", "dual"):
             tbl = {}; frame_dens = 0.0; build_cpn = 0.0
-            for r in (2, 3, 4):
+            for r in (2, 3, 4, 5):
                 n, s, fd, bcpn = _measure_geom(member, kind, r)
                 tbl[str(r)] = [int(n), float(s)]
-                if r == 4:
+                if r == 5:
                     frame_dens = fd; build_cpn = bcpn
-            s3, (n4, s4) = tbl["3"][1], (tbl["4"][0], tbl["4"][1])
-            G[f"{member}|{kind}"] = {"model": "inflate", "table": tbl, "r_built": 4,
-                                     "lambda": s4 / s3, "density": n4 / (s4 * s4),
+            s4, (n5, s5) = tbl["4"][1], (tbl["5"][0], tbl["5"][1])
+            G[f"{member}|{kind}"] = {"model": "inflate", "table": tbl, "r_built": 5,
+                                     "lambda": s5 / s4, "density": n5 / (s5 * s5),
                                      "frame_density": frame_dens, "build_cpn": build_cpn}
     # Penrose: fixed extent, density grows with subdivisions -> table each (all cheap), incl frame dens.
     tbl = {}; build_cpn = 0.0

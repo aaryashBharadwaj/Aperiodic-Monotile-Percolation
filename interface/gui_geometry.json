@@ -13,13 +13,17 @@
       "4": [
         152248,
         168.0
+      ],
+      "5": [
+        1030710,
+        432.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.4705882352941178,
-    "density": 5.394274376417234,
-    "frame_density": 1.7322845804988662,
-    "build_cpn": 4.290105617448624e-06
+    "r_built": 5,
+    "lambda": 2.5714285714285716,
+    "density": 5.522923096707819,
+    "frame_density": 1.7343964334705075,
+    "build_cpn": 5.393823577885466e-06
   },
   "Hat|dual": {
     "model": "inflate",
@@ -35,13 +39,17 @@
       "4": [
         24693,
         168.0
+      ],
+      "5": [
+        169246,
+        428.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.4705882352941178,
-    "density": 0.8748937074829932,
-    "frame_density": 0.2892573696145125,
-    "build_cpn": 3.2878370388393525e-05
+    "r_built": 5,
+    "lambda": 2.5476190476190474,
+    "density": 0.9239125687832999,
+    "frame_density": 0.2885404838850555,
+    "build_cpn": 3.649643300288893e-05
   },
   "Spectre|direct": {
     "model": "inflate",
@@ -57,13 +65,17 @@
       "4": [
         28006,
         80.0
+      ],
+      "5": [
+        214662,
+        224.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.2222222222222223,
-    "density": 4.3759375,
-    "frame_density": 0.728125,
-    "build_cpn": 3.841812468737035e-06
+    "r_built": 5,
+    "lambda": 2.8,
+    "density": 4.278180803571429,
+    "frame_density": 0.7321428571428571,
+    "build_cpn": 4.721294406947168e-06
   },
   "Spectre|dual": {
     "model": "inflate",
@@ -79,13 +91,17 @@
       "4": [
         4401,
         80.0
+      ],
+      "5": [
+        34649,
+        224.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.5,
-    "density": 0.68765625,
-    "frame_density": 0.121875,
-    "build_cpn": 3.17635991817124e-05
+    "r_built": 5,
+    "lambda": 2.8,
+    "density": 0.6905492665816326,
+    "frame_density": 0.12213010204081633,
+    "build_cpn": 3.606717942742238e-05
   },
   "Comet aperiodic|direct": {
     "model": "inflate",
@@ -101,13 +117,17 @@
       "4": [
         76670,
         84.0
+      ],
+      "5": [
+        517394,
+        204.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.3333333333333335,
-    "density": 10.86592970521542,
-    "frame_density": 3.4631519274376417,
-    "build_cpn": 4.7356885352497626e-05
+    "r_built": 5,
+    "lambda": 2.4285714285714284,
+    "density": 12.432574009996156,
+    "frame_density": 3.4744329104190697,
+    "build_cpn": 5.6700995759398876e-05
   },
   "Comet aperiodic|dual": {
     "model": "inflate",
@@ -123,13 +143,17 @@
       "4": [
         24693,
         80.0
+      ],
+      "5": [
+        169246,
+        200.0
       ]
     },
-    "r_built": 4,
+    "r_built": 5,
     "lambda": 2.5,
-    "density": 3.85828125,
-    "frame_density": 1.159375,
-    "build_cpn": 0.0001500511723975596
+    "density": 4.23115,
+    "frame_density": 1.1519,
+    "build_cpn": 0.00017358786913727753
   },
   "Chevron aperiodic|direct": {
     "model": "inflate",
@@ -145,13 +169,17 @@
       "4": [
         50885,
         108.0
+      ],
+      "5": [
+        344070,
+        276.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.4545454545454546,
-    "density": 4.362568587105624,
-    "frame_density": 1.5432098765432098,
-    "build_cpn": 6.818108872872974e-05
+    "r_built": 5,
+    "lambda": 2.5555555555555554,
+    "density": 4.516776937618148,
+    "frame_density": 1.541062801932367,
+    "build_cpn": 8.133910744905374e-05
   },
   "Chevron aperiodic|dual": {
     "model": "inflate",
@@ -167,13 +195,17 @@
       "4": [
         24693,
         108.0
+      ],
+      "5": [
+        169246,
+        276.0
       ]
     },
-    "r_built": 4,
-    "lambda": 2.4545454545454546,
-    "density": 2.1170267489711936,
-    "frame_density": 0.7657750342935528,
-    "build_cpn": 0.00014572515287767127
+    "r_built": 5,
+    "lambda": 2.5555555555555554,
+    "density": 2.2217758874186093,
+    "frame_density": 0.7684310018903592,
+    "build_cpn": 0.00017078452371098817
   },
   "Penrose|direct": {
     "model": "table",
@@ -209,76 +241,76 @@
         0.71280276816609
       ]
     },
-    "build_cpn": 1.1750146878174932e-05
+    "build_cpn": 9.978901733476893e-06
   },
   "Comet|direct": {
     "model": "linear",
     "k": 0.8785714285714286,
     "density": 4.093179012345679,
     "frame_density": 0.8612345679012345,
-    "build_cpn": 6.260876973863002e-06
+    "build_cpn": 6.807727597657773e-06
   },
   "Comet|dual": {
     "model": "linear",
     "k": 0.8785714285714286,
     "density": 1.2978395061728394,
     "frame_density": 0.28586419753086423,
-    "build_cpn": 2.4044448984976933e-05
+    "build_cpn": 2.5375142850323903e-05
   },
   "Chevron|direct": {
     "model": "linear",
     "k": 0.7714285714285715,
     "density": 3.536332169933432,
     "frame_density": 1.20129900147929,
-    "build_cpn": 9.67877623435605e-06
+    "build_cpn": 1.1546260711965196e-05
   },
   "Chevron|dual": {
     "model": "linear",
     "k": 0.7714285714285715,
     "density": 1.6873150887573964,
     "frame_density": 0.5912536982248521,
-    "build_cpn": 2.7621469391528896e-05
+    "build_cpn": 2.9119142872870578e-05
   },
   "Triangular \u2192 Honeycomb|direct": {
     "model": "linear",
     "k": 0.6928571428571428,
     "density": 2.166033340419501,
     "frame_density": 1.1656214569160999,
-    "build_cpn": 2.2428565753497845e-05
+    "build_cpn": 2.5085617916167457e-05
   },
   "Triangular \u2192 Honeycomb|dual": {
     "model": "linear",
     "k": 0.6928571428571428,
     "density": 4.1675524376417235,
     "frame_density": 2.352944302721088,
-    "build_cpn": 1.750818367011617e-05
+    "build_cpn": 2.5458581631585044e-05
   },
   "Square|direct": {
     "model": "linear",
     "k": 1.0142857142857142,
     "density": 1.011520061728395,
     "frame_density": 1.0794135802469136,
-    "build_cpn": 5.319400922264301e-06
+    "build_cpn": 5.502856585576441e-06
   },
   "Square|dual": {
     "model": "linear",
     "k": 0.9857142857142858,
     "density": 1.0298442906574394,
     "frame_density": 1.0810942906574394,
-    "build_cpn": 1.1517530620782351e-05
+    "build_cpn": 1.1361734704019464e-05
   },
   "Tile(1,1) periodic|direct": {
     "model": "linear",
     "k": 1.4928571428571429,
     "density": 1.0763325936883628,
     "frame_density": 0.7335313938198553,
-    "build_cpn": 5.3240986423918085e-05
+    "build_cpn": 6.241526036040095e-05
   },
   "Tile(1,1) periodic|dual": {
     "model": "linear",
     "k": 1.4347011350587184,
     "density": 0.1862615740740741,
     "frame_density": 0.1214351851851852,
-    "build_cpn": 0.00033716168175929755
+    "build_cpn": 0.00037668121345698074
   }
 }
