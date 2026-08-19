@@ -158,11 +158,10 @@ def main():
         # run_one caps windows at 0.95*side (side = inscribed square from largest_square_center, minus a
         # 5% margin so the largest window sits just inside the tiling). Warn a console user whose --lmax
         # overshoots that cap, so a capped sweep isn't a silent surprise (the paper presets sit under it).
-        _side = bundle.get("side")
-        if _side is not None and args.lmax > 0.95 * _side + 1e-9:
-            print(f"  note: --lmax {args.lmax:g} exceeds the safe window cap {0.95 * _side:.0f} "
-                  f"(0.95 x inscribed square) for this patch; larger sizes clip the fringe and will be "
-                  f"skipped.", flush=True)
+        _cap = bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+        if _cap is not None and args.lmax > _cap + 1e-9:
+            print(f"  note: --lmax {args.lmax:g} exceeds the measured solid-window cap {_cap:.0f} "
+                  f"for this patch; larger sizes clip the fringe and will be skipped.", flush=True)
 
         last_i = start_i
         stopped = False
