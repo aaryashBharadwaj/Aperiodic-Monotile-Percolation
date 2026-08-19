@@ -22,6 +22,7 @@ from interface.gui_backend import (REPO_ROOT, build_graph, run_one, warm_up, _fr
 _HERE = os.path.dirname(os.path.abspath(__file__))                 # this interface/ folder (the GUI's config lives beside it)
 CALIB_PATH = os.path.join(_HERE, "gui_calib.json")                 # machine-dependent: per-trial cost (gitignored)
 GEOM_PATH = os.path.join(_HERE, "gui_geometry.json")               # machine-independent: precomputed tiling geometry
+SOLID_PATH = os.path.join(_HERE, "solid_windows.json")             # measured max fully-tiled window per (member,kind,patch)
 
 
 def _default_calib():
@@ -159,6 +160,39 @@ def load_geom():
         return {}
 
 
+def calibrate_solid_windows(save=True):
+    """Measure the largest fully-tiled+surrounded window for each PRODUCTION (member, kind, patch), via
+    the off-tile oracle (builders.solid_window.measure_solid_L). This replaces the 0.95-of-detected-side
+    fudge with a measured bound -- the number the presets/GUI/run_one all use. Heavy (one patch build per
+    entry); run once and ship solid_windows.json."""
+    from builders.solid_window import measure_solid_L
+    from interface.gui_backend import COMET_AP as _CA, CHEVRON_AP as _CH, TILE11 as _T11
+    prod = [("Hat", 6), ("Spectre", 6), (_CA, 6), (_CH, 6),
+            ("Comet", 420), ("Chevron", 420), (_T11, 215)]
+    S = {}
+    for member, patch in prod:                                 # once per member: the window is geometric,
+        S[f"{member}|{patch}"] = measure_solid_L(member, patch)  # identical for the direct/dual graphs on it
+    if save:
+        with open(SOLID_PATH, "w") as f:
+            json.dump(S, f, indent=2)
+    return S
+
+
+_SOLID = None
+def solid_window(member, kind, patch):
+    """Measured solid-window L for `member` at `patch`, or None if that member wasn't calibrated
+    (callers then fall back to the conservative 0.95 x detected side). `kind` is accepted for a uniform
+    call signature but ignored: the solid window is geometric, identical for the direct and dual graphs."""
+    global _SOLID
+    if _SOLID is None:
+        try:
+            with open(SOLID_PATH) as f:
+                _SOLID = json.load(f)
+        except Exception:
+            _SOLID = {}
+    return _SOLID.get(f"{member}|{int(round(patch))}")
+
+
 def geometry(member, kind, patch):
     """Estimate (nodes, inscribed-square side) for a patch WITHOUT building it, from gui_geometry.json.
     Returns None if the geometry file is missing (caller can fall back to an actual build)."""
@@ -201,7 +235,7 @@ def plan_run(member, kind, patch, L_values, T, calib=None):
     if not g or ge is None:
         return None
     nodes_est, side = ge
-    usable_max = 0.95 * side   # the runner keeps windows up to 0.95 x the solid side
+    usable_max = solid_window(member, kind, patch) or 0.95 * side   # measured cap; 0.95*side fallback
     usable = [L for L in L_values if L <= usable_max]
     calib = calib or load_calib()
     density = _frame_density(g, patch)
@@ -235,7 +269,7 @@ def accuracy_estimate(member, kind, patch, L_values, T):
     if not ge:
         return "—"
     side = ge[1]
-    usable = [L for L in L_values if L <= 0.95 * side]
+    usable = [L for L in L_values if L <= (solid_window(member, kind, patch) or 0.95 * side)]
     if len(usable) < 3:
         return "—"
     Lmax = max(usable)

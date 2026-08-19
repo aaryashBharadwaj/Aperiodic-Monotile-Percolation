@@ -222,7 +222,7 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3, scale=None):
         # (was center_mode="bbox"). Its sparse-cloud guard coarsens the grid for Penrose's ~1-node/cell
         # density, returning a real inscribed square instead of the bbox min-extent that overshot the
         # pentagon. NOTE: this shifts Penrose's window (centre + side) -> its p_c must be re-run.
-    elif name == TRI:
+    elif name == TRI or name == "Triangular":   # "Triangular" = CLI-friendly ASCII alias for the arrow name
         tris = triangular_tris(int(patch))
         if is_dual:
             coords, neighbors, _ = build_dual_from_polygons(tris)   # tile adjacency -> the HONEYCOMB
@@ -240,9 +240,17 @@ def build_graph(tiling, graph_type, patch, a=1.0, b=S3, scale=None):
     center_pts = np.concatenate(center_src, axis=0) if center_src is not None else coords
     cx, cy, side = largest_square_center(center_pts)
 
+    # side_cap = the MEASURED largest fully-tiled+surrounded window for this (member, kind, patch), from
+    # the off-tile oracle (interface.estimate.solid_window). run_one/run_crossing cap on this instead of
+    # the old 0.95*side heuristic. Falls back to 0.95*side for uncalibrated configs.
+    from interface.estimate import solid_window
+    kind = "dual" if is_dual else "direct"
+    meas = solid_window(name, kind, int(round(patch)))
+    side_cap = float(meas) if meas else 0.95 * float(side)
+
     return {"coords": coords, "neighbors": neighbors,
-            "center": (float(cx), float(cy)), "side": float(side),
-            "name": name, "kind": "dual" if is_dual else "direct", "nodes": len(coords)}
+            "center": (float(cx), float(cy)), "side": float(side), "side_cap": side_cap,
+            "name": name, "kind": kind, "nodes": len(coords)}
 
 
 # ----------------------------------------------------------------------------- the sweep
@@ -286,16 +294,13 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
     warm_up()
     # 0 -> let each stats class fall back to its _NW default; a positive value overrides it.
     nwkw = {"nworkers": int(nworkers)} if nworkers and int(nworkers) > 0 else {}
-    # TODO(author): NEW -- inscribed-square cap with a 5% safety margin. bundle["side"] is the compact
-    # filled core from largest_square_center; a window past it pokes into the ragged fringe (measured
-    # off-tile AT L=side is ~0.1% hat / ~0.5% spectre via an independent point-in-polygon check, and it
-    # grows from there). Capping at 0.95*side keeps the largest window just inside the core -> ~0%
-    # clipped, uniformly across every tiling. (A node-COUNT fullness test was tried and rejected: fringe
-    # spikes keep the count high, so it accepted windows 50% past the core.) A larger window would still
-    # pass the crude per-side node guard below (fringe spikes touch each edge), so this is the real
-    # backstop for an over-large --lmax / L_max; the paper presets all sit under 0.95*side.
-    side = bundle.get("side")
-    if side is not None and L > 0.95 * side + 1e-9:
+    # Window cap: bundle["side_cap"] is the MEASURED largest fully-tiled+surrounded window (the off-tile
+    # oracle, builders.solid_window / tests/verify_solid_windows) -- 0% off-tile by construction, tight on
+    # the ragged folded-endpoint boundaries where the old 0.95*side heuristic over-reached. build_graph
+    # sets it; it falls back to 0.95*side only for uncalibrated configs. A window past it clips the fringe
+    # and biases spanning, so reject it (the paper presets all sit at side_cap).
+    cap = bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+    if cap is not None and L > cap + 1e-9:
         return {"usable": False, "L": float(L)}
     fd = _frame_data(bundle, L, bt)
     if not _frame_usable(fd):
@@ -332,9 +337,9 @@ def run_crossing(bundle, W, H, T, seed_base, bt=1.0, nworkers=0):
     (aspect a = W/H) and returns the raw left-right crossings (pR) rather than the p_c estimators.
     usable=False if the frame is empty or the rectangle pokes outside the tiling's solid core."""
     warm_up()
-    side = bundle.get("side")
-    # the rectangle must sit inside the solid inscribed square; cap on its larger half-extent
-    if side is not None and max(W, H) > 0.95 * side + 1e-9:
+    # the rectangle must sit inside the measured solid window; cap on its larger half-extent
+    cap = bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+    if cap is not None and max(W, H) > cap + 1e-9:
         return {"usable": False}
     cx, cy = bundle["center"]
     fd = analyze_rect_frame(bundle["coords"], bundle["neighbors"], W, H, boundary_thickness=bt,
@@ -565,43 +570,34 @@ def paper_preset(member, kind):
       Spectre -- level 6, T=500, L=20..int(0.92*side), step max(10, round(Lmax/40/10)*10)
       Comet/Chevron -- 150 cells, T=500, L=20..~0.95*side, step 20
     Spectre/periodic L ranges are computed from the patch extent (via geometry); all use seed 123456789."""
-    from interface.estimate import geometry   # lazy: estimate imports gui_backend, so keep this off module load
+    from interface.estimate import geometry, solid_window   # lazy: estimate imports gui_backend
     seed = 123456789
+
+    def side95(m, patch, kinds=("direct", "dual"), default=300.0):
+        s = [g[1] for g in (geometry(m, k, patch) for k in kinds) if g]
+        return int((min(s) if s else default) * 0.95 // 10 * 10)
+
+    def Lmax(m, patch, kinds=("direct", "dual"), default=300.0):
+        # THE bound: the MEASURED largest fully-tiled+surrounded window (min over graphs -> shared
+        # window). Falls back to 0.95 x detected side only for uncalibrated configs. No fudge factor.
+        meas = [solid_window(m, k, patch) for k in ("direct", "dual")]
+        meas = [v for v in meas if v]
+        return float(min(meas)) if meas else float(side95(m, patch, kinds, default))
+
     if member == "Hat":
-        # L_max derived from 0.95 x solid side like every member (was hardcoded 1000, which exceeded the
-        # window cap and made the GUI flag its own preset). At r=6 this is ~970.
-        sides = [geometry("Hat", k, 6) for k in ("direct", "dual")]
-        side = min([s[1] for s in sides if s], default=1050.0)
-        Lmax = int((side * 0.95) // 10 * 10)
-        return {"patch": 6, "L_min": 10.0, "L_max": float(Lmax), "gap": 10.0, "T": 1000, "seed": seed}
+        return {"patch": 6, "L_min": 10.0, "L_max": Lmax("Hat", 6, default=1050.0),
+                "gap": 10.0, "T": 1000, "seed": seed}
+    # uniform step 10 across every p_c sweep (author's call 2026-08-19): more fit points firm up the
+    # correction-to-scaling exponent everywhere; cost impact is modest (finer step ~doubles the small
+    # step-20 sweeps only, which were the cheap objects).
     if member == "Spectre":
-        # Direct and dual MUST span the same physical window -- comparing p_c across the two graphs only
-        # means anything on a shared extent. The two node clouds give different solid squares, so cap L_max
-        # at the SMALLER (the tighter ceiling binds both); this makes the preset kind-independent.
-        sides = [geometry("Spectre", k, 6) for k in ("direct", "dual")]
-        side = min([s[1] for s in sides if s], default=400.0)
-        Lmax = int((side * 0.95) // 10 * 10)   # uniform 0.95 x solid side (the runner's window cap)
-        gap = max(10.0, round(Lmax / 40 / 10) * 10)
-        # T=1000 (not 500): the spectre is a headline aperiodic result and must read to 4 dp like the hat.
-        return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
-    if member in ("Comet", "Chevron"):
-        # 420-cell block so the solid window reaches L~300 (0.95 x side) -> 4 dp, matching the family; still cheap.
-        ge = geometry(member, kind, 420)
-        side = ge[1] if ge else 300.0
-        Lmax = int(side * 0.95 // 10 * 10)
-        return {"patch": 420, "L_min": 20.0, "L_max": float(Lmax), "gap": 20.0, "T": 1000, "seed": seed}
+        return {"patch": 6, "L_min": 20.0, "L_max": Lmax("Spectre", 6, default=400.0),
+                "gap": 10.0, "T": 1000, "seed": seed}
+    if member in ("Comet", "Chevron"):   # 840 cells (up from 420) buys the 4th p_c digit; periodic builds are cheap
+        return {"patch": 840, "L_min": 20.0, "L_max": Lmax(member, 840), "gap": 10.0, "T": 1000, "seed": seed}
     if member in (COMET_AP, CHEVRON_AP):
-        # Aperiodic endpoints (folded hat): inflation model, like Spectre. Direct and dual have
-        # different solid squares, so cap L_max at the SMALLER so both graphs span the same window.
-        sides = [geometry(member, k, 6) for k in ("direct", "dual")]
-        side = min([s[1] for s in sides if s], default=300.0)
-        Lmax = int((side * 0.95) // 10 * 10)   # uniform 0.95 x solid side
-        gap = max(10.0, round(Lmax / 40 / 10) * 10)
-        return {"patch": 6, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
+        return {"patch": 6, "L_min": 20.0, "L_max": Lmax(member, 6), "gap": 10.0, "T": 1000, "seed": seed}
     if member == TILE11:
-        ge = geometry(member, "direct", 215)
-        side = ge[1] if ge else 140.0
-        Lmax = int(side * 0.95 // 10 * 10)     # uniform 0.95 x solid side
-        gap = max(10.0, round(Lmax / 30 / 10) * 10)
-        return {"patch": 215, "L_min": 20.0, "L_max": float(Lmax), "gap": float(gap), "T": 1000, "seed": seed}
+        return {"patch": 215, "L_min": 20.0, "L_max": Lmax(TILE11, 215, kinds=("direct",), default=140.0),
+                "gap": 10.0, "T": 1000, "seed": seed}
     return None

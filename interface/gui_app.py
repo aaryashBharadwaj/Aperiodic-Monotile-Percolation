@@ -992,13 +992,15 @@ with tab_run:
         patch = st.slider(plabel, plo, phi, key=patch_key)
         # Size + ETA come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing even the
         # r=6 patch is instant. The (heavy) build happens only when you hit Run.
+        meas = estimate.solid_window(member, kind, patch)
         ge = estimate.geometry(member, kind, patch)
-        usable_max = (ge[1] * 0.95) if ge else 200.0   # match the runner's real window cap (0.95 x solid side)
+        usable_max = meas if meas else ((ge[1] * 0.95) if ge else 200.0)
+        how = ("the largest window measured to be fully tiled (0% off-tile) with a coordinated buffer"
+               if meas else "0.95× the detected solid square (conservative fallback — this config isn't "
+               "calibrated)")
         st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
-                   "(bigger windows fall outside the tiling and are skipped). The frame is capped at "
-                   "0.95× the largest solid square — conservative, to stay clear of the ragged patch "
-                   "edge. `tests/verify_solid_windows.py` confirms the frame is fully tiled (0% off-tile) "
-                   "and can justify a larger window if you want the extra sizes.")
+                   f"(bigger windows fall outside the tiling and are skipped). This is {how}; "
+                   "`tests/verify_solid_windows.py` reproduces the check.")
 
         st.markdown("**Parameters**")
         st.session_state.setdefault("perc_lmin", 10.0)

@@ -28,10 +28,21 @@ def build_dual_from_polygons(tile_polygons, tol=1e-5):
     # One node per tile, positioned at the tile's centroid.
     tile_centroids = np.array([poly.mean(axis=0) for poly in tile_polygons])
 
+    # Dedup each tile's OWN vertices before the shared-vertex count. A folded tile can list the same
+    # physical point twice at NON-adjacent ring indices (which _dedup_ring, consecutive-only, misses);
+    # left in, it produces two cross-tile coincidences for a single POINT contact -> count>=2 -> a fake
+    # shared EDGE. Deduping per tile makes count>=2 mean ">=2 distinct shared points". Guaranteed no-op for
+    # any tiling whose tiles have no repeated vertex (hat/spectre/chevron/square/triangular/Tile(1,1)).
+    def _uniq_ring(p):
+        k = np.round(p / tol).astype(np.int64)
+        _, idx = np.unique(k, axis=0, return_index=True)
+        return p[np.sort(idx)] if len(idx) < len(p) else p
+    dedup_polys = [_uniq_ring(p) for p in tile_polygons]
+
     # Flatten every tile's vertices into one array, remembering which tile each vertex belongs to.
     # tile_ids[k] is the owner of vertex k (so tile_ids[20]=1 means flat-vertex 20 belongs to tile 1).
-    sizes = np.array([len(p) for p in tile_polygons])
-    all_verts = np.concatenate(tile_polygons, axis=0)
+    sizes = np.array([len(p) for p in dedup_polys])
+    all_verts = np.concatenate(dedup_polys, axis=0)
     tile_ids = np.repeat(np.arange(N), sizes)
 
     tree = KDTree(all_verts)
