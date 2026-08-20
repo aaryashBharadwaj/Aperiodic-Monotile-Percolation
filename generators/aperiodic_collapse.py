@@ -109,6 +109,30 @@ def collapse_polys(which, reach):
     return folded_polys(reach, sa, sb)
 
 
+# The TURTLE Tile(sqrt3,1) is the hat Tile(1,sqrt3) with its two edge CLASSES swapped (the a-edges and
+# b-edges trade lengths). It is the same folding maker but a NON-degenerate re-embedding -- both scales
+# are > 0, so nothing collapses: it's a genuinely different tiling GEOMETRY carrying the SAME adjacency.
+# That is the concrete "distinct build" behind the family-invariance claim: the isomorphism checker
+# confirms turtle direct/dual == hat direct/dual (identical V/E/degree/triangle/WL), so identical p_c
+# by construction -- no separate Monte-Carlo run. Native hat = folded_polys(reach, 1, 1).
+_TURTLE_SCALE = (SQ3, 1.0 / SQ3)     # a-edges *sqrt3 (short->long), b-edges *1/sqrt3 (long->short)
+
+
+def turtle_polys(reach):
+    """Turtle Tile(sqrt3,1) tile polygons: the hat leaves re-embedded with the two edge lengths swapped."""
+    return folded_polys(reach, *_TURTLE_SCALE)
+
+
+def turtle_graph(kind, reach):
+    """(coords, neighbors, polys) for the turtle; kind in {'direct','dual'}. Isomorphic to the hat."""
+    polys = turtle_polys(reach)
+    if kind == "dual":
+        coords, neighbors, _ = build_dual_from_polygons(polys)
+    else:
+        coords, neighbors = graph_from_polygons(polys)
+    return coords, neighbors, polys
+
+
 def collapse_graph(which, kind, reach):
     """(coords, neighbors, polys) for the aperiodic comet/chevron. which in {'comet','chevron'};
     kind in {'direct','dual'}. The collapsed-edge de-dup happens inside the shared builders."""
