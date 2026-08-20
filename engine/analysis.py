@@ -199,11 +199,12 @@ def fit_exponents(L_list, smax, B=200, seed=17):
 
 
 # ---- correlation-length exponent nu from the transition width (omega is an INPUT, not a fit) ----
-def _width_nu(L, widths, sigmas, omega):
-    """The nu minimising the summed weighted residual of  std(onset) = A L^{-1/nu} (1 + B L^{-omega})
-    across one or more channels, with omega held fixed and the amplitudes (A, A*B) profiled out linearly
-    per channel. Several channels (site/bond, I/U) share nu and omega but keep independent amplitudes,
-    which is what tightens nu."""
+def _width_gof(L, widths, sigmas, omega):
+    """Best-fit nu at fixed omega, PLUS the joint chi^2 and its dof -- the goodness-of-fit the adaptive
+    cutoff tests. Model per channel: std(onset) = A L^{-1/nu} (1 + B L^{-omega}); the amplitudes (A, A*B)
+    are profiled out linearly, nu is shared across channels, omega is held fixed. Several channels
+    (site/bond, I/U) share nu but keep independent amplitudes, which is what tightens nu. Free parameters =
+    2 per channel (the amplitudes) + 1 (nu), so dof = (points x channels) - (2*channels + 1)."""
     from scipy.optimize import minimize_scalar
     def chi2(nu):
         tot = 0.0
@@ -215,10 +216,18 @@ def _width_nu(L, widths, sigmas, omega):
                 return 1e18
             tot += float(np.sum(Wt * (w - M @ c) ** 2))
         return tot
-    return float(minimize_scalar(chi2, bounds=(1.10, 1.60), method="bounded").x)
+    nu = float(minimize_scalar(chi2, bounds=(1.10, 1.60), method="bounded").x)
+    n_ch = len(widths); m = len(L)
+    return nu, chi2(nu), max(1, m * n_ch - (2 * n_ch + 1))
 
 
-def fit_nu(L_list, channels, omega_lo=0.5, omega_hi=1.5, n_omega=13, B=200, seed=17, L_min=50.0):
+def _width_nu(L, widths, sigmas, omega):
+    """The nu minimising the joint weighted residual of the width model (see _width_gof for the model)."""
+    return _width_gof(L, widths, sigmas, omega)[0]
+
+
+def fit_nu(L_list, channels, omega_lo=0.5, omega_hi=1.5, n_omega=13, B=200, seed=17,
+           cutoff_conf=0.95, L_min=None):
     """nu from the finite-size transition width, std(onset) ~ L^{-1/nu}. The correction-to-scaling
     exponent omega is NOT measurable at accessible sizes -- the joint (nu, omega) fit is degenerate and
     the direct omega observables are swamped by noise (needs Ziff-scale statistics) -- so we do NOT fit
@@ -228,15 +237,36 @@ def fit_nu(L_list, channels, omega_lo=0.5, omega_hi=1.5, n_omega=13, B=200, seed
     on omega. `channels` is a list of per-L onset-array lists (e.g. site-I/U and bond-I/U) that share nu
     and omega but have independent amplitudes -- a joint fit. Returns the nu band + bootstrap CIs at the
     band ends. Validate by running it on exact-nu=4/3 lattices (square/triangular): the same procedure
-    must return ~4/3 there. L_min drops the smallest sizes (biggest corrections); default 50 matches the
-    p_c-extrapolation cutoff."""
+    must return ~4/3 there.
+
+    The low-L cutoff is chosen the SAME principled way as extrapolate_pc_raw, not a fixed L: drop the
+    smallest sizes until the (corrections-included) width model is no longer rejected by a chi^2 goodness-
+    of-fit test at cutoff_conf, evaluated at the mid-band omega. `L_min`, if given, is an extra HARD floor
+    (the adaptive cutoff can sit above it but never below). This replaces the old fixed L_min=50."""
     L_all = np.asarray(L_list, float)
-    keep = L_all >= L_min
-    L = L_all[keep]
-    ch_arrs = [[np.asarray(a, float) for a, k in zip(ch, keep) if k] for ch in channels]
-    Ts = [len(ch[0]) for ch in ch_arrs]
-    widths = [np.array([a.std(ddof=1) for a in ch]) for ch in ch_arrs]
-    sigmas = [w / np.sqrt(2.0 * (T - 1)) for w, T in zip(widths, Ts)]
+    order = np.argsort(L_all)                              # ascending L -> "drop the first k" = drop smallest
+    Ls = L_all[order]
+    ch_sorted = [[np.asarray(ch[i], float) for i in order] for ch in channels]
+    Ts = [len(ch[0]) for ch in ch_sorted]                 # trials per L (constant across L)
+
+    def _wsig(chsub):
+        widths = [np.array([a.std(ddof=1) for a in ch]) for ch in chsub]
+        sigmas = [w / np.sqrt(2.0 * (T - 1)) for w, T in zip(widths, Ts)]
+        return widths, sigmas
+
+    # ADAPTIVE CUTOFF: same chi^2 goodness-of-fit criterion as the p_c extrapolation, at the mid-band omega.
+    om_mid = 0.5 * (omega_lo + omega_hi); alpha = 1.0 - cutoff_conf
+    n = len(Ls); k0 = 0
+    for k in range(0, max(1, n - 4)):                     # keep >= ~4 sizes so the joint fit has dof
+        k0 = k
+        _nu, chi2v, dof = _width_gof(Ls[k:], *_wsig([ch[k:] for ch in ch_sorted]), om_mid)
+        if stats.chi2.sf(chi2v, dof) > alpha:            # width model no longer rejected -> stop
+            break
+    cutoff = Ls[k0] if L_min is None else max(Ls[k0], float(L_min))
+    keep = Ls >= cutoff
+    L = Ls[keep]
+    ch_arrs = [[a for a, kf in zip(ch, keep) if kf] for ch in ch_sorted]
+    widths, sigmas = _wsig(ch_arrs)
     omegas = np.linspace(omega_lo, omega_hi, n_omega)
     nu_by_omega = {round(float(om), 4): _width_nu(L, widths, sigmas, om) for om in omegas}
     vals = np.array(list(nu_by_omega.values()))
@@ -248,5 +278,6 @@ def fit_nu(L_list, channels, omega_lo=0.5, omega_hi=1.5, n_omega=13, B=200, seed
     return {"nu_band": (float(vals.min()), float(vals.max())),
             "omega_band": (omega_lo, omega_hi),
             "nu_by_omega": nu_by_omega,
+            "cutoff_L": float(cutoff), "n_used": int(len(L)),
             "nu_at_omega_lo": nu_by_omega[round(float(omegas[0]), 4)], "ci_at_omega_lo": boot_ci(omega_lo),
             "nu_at_omega_hi": nu_by_omega[round(float(omegas[-1]), 4)], "ci_at_omega_hi": boot_ci(omega_hi)}
