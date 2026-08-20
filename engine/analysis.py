@@ -21,22 +21,38 @@ def _wls_fit(x, y, sigma, n, confidence):
     XtWX = X.T @ W @ X
     XtWy = X.T @ W @ y
     coeffs = np.linalg.solve(XtWX, XtWy)
-
-    # We do NOT rescale it by reduced chi-squared: with ~1000 trials per point the sigmas are well determined, so treating them as known is the honest choice.
     cov = np.linalg.inv(XtWX)
     pc_hat = coeffs[0]
     A_hat  = coeffs[1]
-    pc_std = np.sqrt(cov[0, 0])
-    A_std  = np.sqrt(cov[1, 1])
+
+    # Reduced chi-square of the fit. With ~1000 trials per point the per-point sigmas are well
+    # determined, so an excess (chi2_red > 1) is NOT noisy error bars -- it is the leading-order model
+    # p_c + A*L^(-1/nu) falling short of the real corrections-to-scaling curvature. Treating the sigmas
+    # as "known" then understates the intercept uncertainty (the classic too-tight "+-0.0000"). The honest
+    # fix is the Birge ratio: inflate the parameter errors by sqrt(chi2_red). We only ever inflate
+    # (max with 1) -- a good fit (chi2_red <= 1) keeps the raw statistical error, we never claim better.
+    resid   = y - X @ coeffs
+    dof     = max(1, n - 2)
+    chi2_red = float(resid @ (w * resid)) / dof
+    scale   = max(1.0, np.sqrt(chi2_red))
+    pc_std  = np.sqrt(cov[0, 0]) * scale
+    A_std   = np.sqrt(cov[1, 1]) * scale
 
     # Use a t-distribution
-    t_crit = stats.t.ppf((1 + confidence) / 2, df=n - 2)
+    t_crit = stats.t.ppf((1 + confidence) / 2, df=dof)
     pc_ci  = (pc_hat - t_crit * pc_std, pc_hat + t_crit * pc_std)
 
-    return pc_hat, A_hat, pc_std, A_std, pc_ci
+    return pc_hat, A_hat, pc_std, A_std, pc_ci, chi2_red
 
 
-def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confidence=0.95):
+def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confidence=0.95,
+                       bias_floor=None, cutoff_conf=0.95):
+    # bias_floor: if given, the reported systematic is floored at this value -- the size of the residual
+    # finite-size bias that the KNOWN-lattice controls show at this run's reach (a self-hiding systematic
+    # the fit-window scan can miss). Supplied by the reporting layer from the control "bias ruler".
+    # cutoff_conf: the adaptive low-L cutoff is chosen by a chi^2 GOODNESS-OF-FIT test at this confidence
+    # rather than an arbitrary L or chi2_red threshold. We include the most points (best lever arm) for
+    # which the leading-order line is not rejected at cutoff_conf (p-value > 1-cutoff_conf).
     L  = np.array(L_list, dtype=float)
     n  = len(L)
     # The finite estimates approach the true p_c using a critical exponent nu = 4/3, so we use this to estimate p_c
@@ -72,19 +88,56 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
         ('U', np.array(mean_U),  np.array(sigma_U)),
         ('A', np.array(mean_A),  np.array(sigma_A)),
     ]:
-        pc_hat, A_hat, pc_std, A_std, pc_ci = _wls_fit(x, y, sigma, n, confidence)
+        y = np.asarray(y); sigma = np.asarray(sigma)
+
+        # (1) ADAPTIVE CUTOFF by a chi^2 goodness-of-fit test. The leading-order line holds only once the
+        # corrections-to-scaling have died. We keep the MOST points (best lever arm) for which the fit is
+        # not rejected at cutoff_conf -- i.e. the smallest cutoff whose chi^2 p-value exceeds 1-cutoff_conf.
+        # This replaces an arbitrary L (or chi2_red) threshold with a statistical criterion, and it
+        # DE-BIASES the intercept (the most-corrected low-L points otherwise drag it).
+        alpha = 1.0 - cutoff_conf
+        k0 = 0
+        for k in range(0, max(1, n - 6)):
+            k0 = k
+            nk = n - k; dof = max(1, nk - 2)
+            chi2r = _wls_fit(x[k:], y[k:], sigma[k:], nk, confidence)[5]
+            if stats.chi2.sf(chi2r * dof, dof) > alpha:   # fit no longer rejected at this confidence
+                break
+        pc_hat, A_hat, pc_std_stat, A_std, _ci, chi2_red = _wls_fit(x[k0:], y[k0:], sigma[k0:], n - k0, confidence)
+        nrem = n - k0
+
+        # (2) CLEAN FIT-WINDOW SYSTEMATIC. Vary the cutoff upward from k0, but ONLY over windows that keep
+        # >= half the post-cutoff points -- so this measures genuine cutoff-dependence, not the noise of
+        # few-point fits (the earlier scan ran down to 5 points and badly over-reported the error).
+        wins = [pc_hat]
+        for k in range(k0 + 1, k0 + int(round(0.4 * nrem)) + 1):
+            if n - k >= max(6, int(round(0.5 * nrem))):
+                wins.append(_wls_fit(x[k:], y[k:], sigma[k:], n - k, confidence)[0])
+        pc_syst = float(np.std(wins)) if len(wins) >= 2 else 0.0
+
+        # (3) BIAS-RULER FLOOR. Known-lattice controls at this reach miss the truth by >= bias_floor (a
+        # self-hiding finite-size bias the fit-window scan can't see); floor the systematic there.
+        syst = max(pc_syst, float(bias_floor or 0.0))
+        pc_std = float(np.hypot(pc_std_stat, syst))
+        t_crit = stats.t.ppf((1 + confidence) / 2, df=max(1, nrem - 2))
+        pc_ci  = (pc_hat - t_crit * pc_std, pc_hat + t_crit * pc_std)
+
         results[label] = {
-            # A is the fitted slope (scaling amplitude); reported for completeness.
-            'pc'    : pc_hat,
-            'A'     : A_hat,
-            'pc_std': pc_std,
-            'pc_ci' : pc_ci,
-            'A_std' : A_std,
+            'pc'         : pc_hat,
+            'A'          : A_hat,
+            'pc_std'     : pc_std,          # total: stat (+) max(fit-window syst, bias-ruler floor)
+            'pc_ci'      : pc_ci,
+            'A_std'      : A_std,
+            'chi2_red'   : chi2_red,
+            'pc_std_stat': pc_std_stat,     # statistical (chi2-inflated)
+            'pc_syst'    : pc_syst,         # fit-window (extrapolation)
+            'bias_floor' : float(bias_floor or 0.0),
+            'cutoff_L'   : float(round(x[k0] ** (-nu))),
+            'n_used'     : nrem,
         }
-        print(f"[{label}] Extrapolated p_c     : {pc_hat:.6f} ± {pc_std:.6f}")
-        print(f"[{label}] Scaling amplitude A  : {A_hat:.6f} ± {A_std:.6f}")
-        print(f"[{label}] {int(confidence*100)}% CI             : [{pc_ci[0]:.6f}, {pc_ci[1]:.6f}]")
-        print()
+        print(f"[{label}] p_c = {pc_hat:.6f} ± {pc_std:.6f}  "
+              f"(stat {pc_std_stat:.6f}, syst {pc_syst:.6f}, floor {float(bias_floor or 0.0):.6f}, "
+              f"chi2={chi2_red:.2f}, fit L>={int(round(x[k0]**(-nu)))}, {nrem} pts)")
 
     return results
 
@@ -114,7 +167,7 @@ def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
     d_se   = np.array([(rR - rD).std(ddof=1) / np.sqrt(len(rR)) for rR, rD in zip(pR, pD)])
     # Identical machinery to extrapolate_pc_raw
     # The discarded return values are the slope and the standard errors, which aren't needed
-    d_inf, _, _, _, d_ci = _wls_fit(x, d_mean, d_se, n, confidence)
+    d_inf, _, _, _, d_ci, _ = _wls_fit(x, d_mean, d_se, n, confidence)
     # Does the confidence interval straddle zero? If yes, the extrapolated difference is consistent with zero
     # If the interval sits entirely above or below zero, the two directions genuinely differ and p_A would be blending two different things
     unbiased = d_ci[0] <= 0.0 <= d_ci[1]
