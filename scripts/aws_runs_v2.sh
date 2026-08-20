@@ -30,8 +30,11 @@ echo "===== hat dual re-run @ r=6 only to add d_f (already hat-level reach) ====
 $R --tiling "Hat"               --graph dual   --patch 6 --lmin 200 --lmax 1090 --gap 10 --trials 1000 --seed $SEED --exponents --threads 0
 
 echo "===== periodic monotile DIRECT graphs @ bigger cells for hat-level reach (+d_f) ====="
+# L_max = each patch's MEASURED solid window (interface/solid_windows.json): Comet|1300=1100 (clean, fits),
+# Chevron|1300=920 (large fringe -> caps below 1100; more cells would only buy reach at n^2 tile cost),
+# Tile(1,1)|860=1190 (1080 sits inside).
 $R --tiling "Comet"             --graph direct --patch 1300 --lmin 200 --lmax 1100 --gap 10 --trials 1000 --seed $SEED --exponents --threads 0
-$R --tiling "Chevron"           --graph direct --patch 1300 --lmin 200 --lmax 1100 --gap 10 --trials 1000 --seed $SEED --exponents --threads 0
+$R --tiling "Chevron"           --graph direct --patch 1300 --lmin 200 --lmax 920  --gap 10 --trials 1000 --seed $SEED --exponents --threads 0
 $R --tiling "Tile(1,1) periodic" --graph direct --patch 860 --lmin 200 --lmax 1080 --gap 10 --trials 1000 --seed $SEED --exponents --threads 0
 # (All three periodic DUALS are known lattices -> isomorphism proof, not run.)
 

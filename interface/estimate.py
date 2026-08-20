@@ -160,21 +160,46 @@ def load_geom():
         return {}
 
 
-def calibrate_solid_windows(save=True):
+def calibrate_solid_windows(save=True, prod=None, merge=True):
     """Measure the largest fully-tiled+surrounded window for each PRODUCTION (member, kind, patch), via
     the off-tile oracle (builders.solid_window.measure_solid_L). This replaces the 0.95-of-detected-side
     fudge with a measured bound -- the number the presets/GUI/run_one all use. Heavy (one patch build per
-    entry); run once and ship solid_windows.json."""
+    entry); run once and ship solid_windows.json.
+
+    `prod` overrides the default (member, patch) list -- pass the batch's patches when they differ from a
+    previous run. With merge=True the results are folded into the existing json (so earlier entries the new
+    batch doesn't touch survive). Each entry is timed, printed, and saved incrementally, so a long build
+    that is interrupted keeps the windows already measured.
+
+    Only patches whose sweep L_max can actually EXCEED 0.95*side need measuring -- for the clean periodic
+    lattices (Square/Triangular) and the fixed-extent Penrose the fallback is already inside the solid
+    region, so they are deliberately not listed. The default list tracks scripts/aws_runs_v2.sh.
+
+    The r=7 comet/chevron aperiodic FOLDS are also omitted on purpose: their sweep L_max (1130/1200) sits
+    well inside the solid window (measured Spectre|7=1690 scales to ~1370/~1930 for them), so 0.95*side is
+    already safe there -- and measuring them means ~8M matplotlib Paths in the off-tile oracle, which needs
+    far more RAM than the fold itself (the fold is only ~3GB at r=7). Not worth it for a non-binding cap."""
     from builders.solid_window import measure_solid_L
-    from interface.gui_backend import COMET_AP as _CA, CHEVRON_AP as _CH, TILE11 as _T11
-    prod = [("Hat", 6), ("Spectre", 6), (_CA, 6), (_CH, 6),
-            ("Comet", 420), ("Chevron", 420), (_T11, 215)]
+    from interface.gui_backend import TILE11 as _T11
+    if prod is None:
+        # the cap-BINDING v2 patches only: the two periodic folds whose L_max reaches their window, plus
+        # Tile(1,1) and the r=6 hat (both comfortably inside, refreshed for completeness). Spectre|7 was
+        # measured once (=1690, non-binding) and survives via merge=True; it isn't rebuilt here.
+        prod = [("Comet", 1300), ("Chevron", 1300), (_T11, 860), ("Hat", 6)]
     S = {}
+    if merge:
+        try:
+            with open(SOLID_PATH) as f:
+                S = json.load(f)
+        except Exception:
+            S = {}
     for member, patch in prod:                                 # once per member: the window is geometric,
+        t0 = time.perf_counter()
         S[f"{member}|{patch}"] = measure_solid_L(member, patch)  # identical for the direct/dual graphs on it
-    if save:
-        with open(SOLID_PATH, "w") as f:
-            json.dump(S, f, indent=2)
+        print(f"  solid_window {member}|{patch} = {S[f'{member}|{patch}']}  ({time.perf_counter()-t0:.1f}s)", flush=True)
+        if save:                                                # incremental: survive an interrupt
+            with open(SOLID_PATH, "w") as f:
+                json.dump(S, f, indent=2)
     return S
 
 
