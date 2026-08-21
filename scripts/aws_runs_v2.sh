@@ -58,4 +58,9 @@ $R --tiling "Triangular" --graph dual   --patch 1300 --lmin 20 --lmax 1080 --gap
 # 13 fills scale~1600 (L~800) -- the most reach Penrose can give, near-hat precision (its own limit).
 $R --tiling "Penrose"    --graph direct --patch 13   --lmin 20 --lmax 800  --gap 10 --trials $T --seed $SEED --exponents --threads 0
 
-echo "===== v2 complete -- 14 runs; 4 duals skipped by isomorphism proof ====="
+echo "===== 3D negative control: cube to L=320 (recover 3D exponents; prove pipeline is not 2D-only) ====="
+# Not runner/runner.py -- the cube has its own entry point. L=320 (~33M nodes at the top, sparse ladder)
+# is the knee of the L^3 cost curve: exponents within ~1% of the 3D textbook for ~5 USD. T matches the hat.
+${PY:-python} -m engine.null_control_cube --lmax 320 --trials $T
+
+echo "===== v2 complete -- 14 family runs + cube; 4 duals skipped by isomorphism proof ====="

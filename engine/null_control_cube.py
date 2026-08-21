@@ -90,17 +90,27 @@ def _df_from_smax(L_list, smax, L_min=0):
     return float(b[0])
 
 
+# a size ladder: dense at small L (cheap, anchors the curve), sparse at large L (each is L^3, expensive).
+_LADDER = [8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 128, 160, 192, 224, 256, 288, 320, 384]
+
+
 def main():
-    L_list = [8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48]
-    print("3D simple-cubic NEGATIVE CONTROL  (same kernel, same estimators as the 2D family)\n")
-    r = run_cube_sweep(L_list, T=2000)
+    import argparse
+    ap = argparse.ArgumentParser(description="3D simple-cubic negative control")
+    ap.add_argument("--lmax", type=int, default=48, help="largest cube side L (realistic best ~320)")
+    ap.add_argument("--trials", type=int, default=1000, help="trials per size (hat used 1000)")
+    args = ap.parse_args()
+    L_list = [L for L in _LADDER if L <= args.lmax]
+    print(f"3D simple-cubic NEGATIVE CONTROL  (same kernel/estimators as the 2D family)  "
+          f"L<={args.lmax}, T={args.trials}\n")
+    r = run_cube_sweep(L_list, T=args.trials)
 
     # p_c: extrapolate with the 3D nu (shows the measurement RECOVERS the known cube value -> not broken)
     pc = extrapolate_pc_raw(r["L"], r["I"], r["U"], nu=NU_3D)["A"]
     # nu: the paper's width-line procedure, wide bound so the 3D value is reachable
     nu = width_nu(r["L"], [r["I"], r["U"]])
     nu_2Dfit = width_nu(r["L"], [r["I"], r["U"]], nu_lo=1.10, nu_hi=1.60)   # what the 2D-clamped fitter sees
-    df = _df_from_smax(r["L"], r["smax"], L_min=16)
+    df = _df_from_smax(r["L"], r["smax"], L_min=max(16, args.lmax // 6))   # drop small-L for the slope
 
     print("\n" + "=" * 78)
     print("RESULT  (cube measured  vs  3D literature  vs  the 2D class the family sits in)")
