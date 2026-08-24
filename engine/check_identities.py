@@ -37,7 +37,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--patch", type=int, default=3, help="hat/spectre metatile depth (bigger = larger interior)")
     ap.add_argument("--cells", type=int, default=120, help="periodic tiling cell count")
-    ap.add_argument("--rounds", type=int, default=6, help="Weisfeiler-Lehman rounds for the identity test")
     args = ap.parse_args()
 
     print("=" * 96)
@@ -53,13 +52,9 @@ def main():
     print("=" * 96)
     ca, na = _graph("Comet aperiodic", "Dual", args.patch)
     hc, hn = _graph("Hat",             "Dual", args.patch)
-    ok, d = iso.isomorphic(hn, na, rounds=args.rounds)
-    a, b = d["a"], d["b"]
-    print(f"  comet-aperiodic dual  vs  hat dual :  V {a['V']}/{b['V']}  E {a['E']}/{b['E']}  "
-          f"deg-hist {'=' if a['degree_hist']==b['degree_hist'] else 'X'}  "
-          f"tri-hist {'=' if a['triangle_hist']==b['triangle_hist'] else 'X'}  "
-          f"WL-hist {'=' if a['wl_hist']==b['wl_hist'] else 'X'}")
-    print(f"     -> {'ISOMORPHIC (all invariants match -> same p_c by construction)' if ok else 'NOT isomorphic -- investigate'}")
+    ok, d = iso.isomorphic(hn, na)
+    print(f"  comet-aperiodic dual  vs  hat dual :  V {d['V']}  E {d['E']}   [{d['method']}]")
+    print(f"     -> {'ISOMORPHIC (same p_c by construction)' if ok else 'NOT isomorphic -- investigate'}")
 
     print("\n" + "=" * 96)
     print("TURTLE == HAT  (the general maker used on the one member that needs it: Tile(sqrt3,1) is the")
@@ -69,12 +64,9 @@ def main():
     for kind in ("direct", "dual"):
         hc, hn = _graph("Hat", kind.capitalize(), args.patch)
         tc, tn, _ = turtle_graph(kind, args.patch)
-        ok, d = iso.isomorphic(hn, tn, rounds=args.rounds)
-        a, b = d["a"], d["b"]
-        print(f"  turtle {kind:6s} vs hat {kind:6s}:  V {a['V']}/{b['V']}  E {a['E']}/{b['E']}  "
-              f"deg {'=' if a['degree_hist']==b['degree_hist'] else 'X'}  "
-              f"tri {'=' if a['triangle_hist']==b['triangle_hist'] else 'X'}  "
-              f"WL {'=' if a['wl_hist']==b['wl_hist'] else 'X'}  ->  {'ISOMORPHIC' if ok else 'MISMATCH -- investigate'}")
+        ok, d = iso.isomorphic(hn, tn)
+        print(f"  turtle {kind:6s} vs hat {kind:6s}:  V {d['V']}  E {d['E']}   [{d['method']}]  ->  "
+              f"{'ISOMORPHIC' if ok else 'MISMATCH -- investigate'}")
 
     print("\n" + "=" * 96)
     print("NOVEL APERIODIC DUALS  (interior is NOT a single-lattice signature -> genuinely new, must measure)")

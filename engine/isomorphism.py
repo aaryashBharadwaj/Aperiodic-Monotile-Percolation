@@ -2,11 +2,10 @@
 
 Two jobs, both of which let us REPLACE a Monte-Carlo p_c run with a proof:
 
-  (A) EXACT IDENTITY -- two graphs built in the SAME physical coordinate frame are the same graph iff,
-      after merging coincident nodes, their edge sets are bit-identical. This is how we show
-      comet-aperiodic dual == hat dual (one folds into the other, so the tile-adjacency is preserved),
-      and it is the primitive a turtle<->hat re-embedding check calls. No percolation needed: identical
-      graph => identical threshold by construction.
+  (A) GRAPH ISOMORPHISM -- two tilings that produce the same graph (up to relabelling) percolate
+      identically, so one run covers both. We delegate this to NetworkX: `nx.is_isomorphic` (the VF2
+      algorithm) is an EXACT certificate; for very large graphs it falls back to the Weisfeiler-Leman
+      hash (fast, strong evidence). This is how we show comet-aperiodic dual == hat dual and turtle == hat.
 
   (B) LOCAL LATTICE CLASSIFICATION -- a finite patch of a periodic dual can't be *globally* isomorphic to
       an infinite lattice (its boundary differs), so instead we read the boundary-FREE interior signature:
@@ -15,129 +14,49 @@ Two jobs, both of which let us REPLACE a Monte-Carlo p_c run with a proof:
       interior -- triangular=(6,6), square=(4,0), honeycomb=(3,0). A single interior pair that matches a
       reference lattice IS that lattice locally; a spread of pairs is an aperiodic (novel) graph.
 
-Everything here is graph structure only -- angles and edge lengths never enter (percolation ignores them).
+The heavy graph theory (isomorphism, WL, triangle counting) is NetworkX; the code here is only the thin
+adjacency->graph conversion and the geometric interior classifier. Angles/edge lengths never enter --
+percolation ignores them.
 """
 import numpy as np
+import networkx as nx
 
 
-# --------------------------------------------------------------------------- basic invariants
-def degree_histogram(neighbors):
-    """{degree: count} over all nodes."""
-    degs = np.fromiter((len(nb) for nb in neighbors), dtype=np.int64, count=len(neighbors))
-    vals, cnts = np.unique(degs, return_counts=True)
-    return {int(v): int(c) for v, c in zip(vals, cnts)}
+# --------------------------------------------------------------------------- graph isomorphism (NetworkX)
+def to_networkx(neighbors):
+    """Adjacency list (list of int arrays) -> undirected nx.Graph on nodes 0..n-1. Each undirected edge
+    is added once (the `i < j` guard)."""
+    G = nx.Graph()
+    G.add_nodes_from(range(len(neighbors)))
+    G.add_edges_from((i, int(j)) for i, row in enumerate(neighbors) for j in row if i < int(j))
+    return G
 
 
-def edge_count(neighbors):
-    """Undirected edge count (adjacency stores each edge twice)."""
-    return int(sum(len(nb) for nb in neighbors) // 2)
+def graph_hash(neighbors, iterations=4):
+    """NetworkX Weisfeiler-Leman graph hash: the standard label-independent fingerprint, fast at any size."""
+    return nx.weisfeiler_lehman_graph_hash(to_networkx(neighbors), iterations=iterations)
 
 
-def triangles_per_node(neighbors):
-    """triangles[i] = number of triangles node i sits in. For each node we count neighbour PAIRS that
-    are themselves adjacent; that counts each of the node's triangles exactly once."""
-    nbr_sets = [set(int(x) for x in nb) for nb in neighbors]
-    tri = np.zeros(len(neighbors), dtype=np.int64)
-    for i, s in enumerate(nbr_sets):
-        nb = list(s)
-        c = 0
-        for a_idx in range(len(nb)):
-            sa = nbr_sets[nb[a_idx]]
-            for b_idx in range(a_idx + 1, len(nb)):
-                if nb[b_idx] in sa:
-                    c += 1
-        tri[i] = c
-    return tri
+def isomorphic(neighbors_a, neighbors_b, exact=None):
+    """Are the two graphs isomorphic (up to relabelling)? Returns (bool, detail).
 
-
-# --------------------------------------------------------------------------- Weisfeiler-Lehman
-def wl_colors(neighbors, rounds=6):
-    """Weisfeiler-Lehman colour refinement. Each round a node's new colour = hash of (its colour, the
-    sorted multiset of neighbour colours), then colours are re-packed to 0..k-1. Returns the final
-    per-node colour array. Identical WL colour histograms are strong (not complete) evidence of
-    isomorphism -- the standard graph fingerprint, and what the turtle==hat identity was checked with."""
-    n = len(neighbors)
-    colors = np.zeros(n, dtype=np.int64)                       # start: every node the same colour
-    degs = np.fromiter((len(nb) for nb in neighbors), dtype=np.int64, count=n)
-    colors = degs.copy()                                       # seed with degree (a cheap first split)
-    for _ in range(rounds):
-        new = np.empty(n, dtype=np.int64)
-        code = {}                                              # signature tuple -> dense colour id
-        for i in range(n):
-            nc = np.sort(colors[neighbors[i]])
-            sig = (int(colors[i]),) + tuple(int(x) for x in nc)
-            c = code.get(sig)
-            if c is None:
-                c = len(code); code[sig] = c
-            new[i] = c
-        if len(code) == len(np.unique(colors)):               # stable: refinement added nothing new
-            colors = new
-            break
-        colors = new
-    return colors
-
-
-def wl_histogram(colors):
-    """Canonical, label-independent fingerprint: the sorted tuple of colour-class sizes."""
-    _, cnts = np.unique(colors, return_counts=True)
-    return tuple(sorted(int(c) for c in cnts))
-
-
-def graph_fingerprint(neighbors, rounds=6):
-    """Bundle the label-independent invariants used to compare two graphs up to isomorphism."""
-    return {
-        "V": len(neighbors),
-        "E": edge_count(neighbors),
-        "degree_hist": degree_histogram(neighbors),
-        "triangle_hist": _hist(triangles_per_node(neighbors)),
-        "wl_hist": wl_histogram(wl_colors(neighbors, rounds)),
-    }
-
-
-def _hist(arr):
-    vals, cnts = np.unique(arr, return_counts=True)
-    return {int(v): int(c) for v, c in zip(vals, cnts)}
-
-
-def isomorphic(neighbors_a, neighbors_b, rounds=6):
-    """Isomorphism up to relabelling, via matching invariants (V, E, degree/triangle histograms, WL
-    histogram). WL is not a complete invariant, so this returns 'strong evidence', not a mathematical
-    certificate -- but for these lattice-vs-lattice comparisons it is decisive. Use identical_in_frame()
-    when the two graphs share a coordinate frame; that IS a certificate."""
-    fa, fb = graph_fingerprint(neighbors_a, rounds), graph_fingerprint(neighbors_b, rounds)
-    return fa == fb, {"a": fa, "b": fb}
-
-
-# --------------------------------------------------------------------------- exact identity in a frame
-def identical_in_frame(coords_a, neighbors_a, coords_b, neighbors_b, tol=1e-5):
-    """CERTIFICATE-grade identity: when both graphs live in the same physical coordinate frame (e.g. two
-    tilings that fold into each other), merge coincident nodes across BOTH, relabel every edge to those
-    shared node ids, and check the two undirected edge sets are exactly equal. Bit-identical edge sets
-    on shared nodes => the same graph, so the same p_c by construction (no Monte Carlo)."""
-    from builders.direct_graph_builder import dedup_vertices
-    ca, cb = np.asarray(coords_a, float), np.asarray(coords_b, float)
-    na, nb = len(ca), len(cb)
-    _, lab = dedup_vertices(np.concatenate([ca, cb], axis=0), tol)     # global label per physical point
-    la, lb = lab[:na], lab[na:]
-
-    def edgeset(labels, neighbors):
-        es = set()
-        for i, row in enumerate(neighbors):
-            u = int(labels[i])
-            for j in row:
-                v = int(labels[j])
-                if u != v:
-                    es.add((u, v) if u < v else (v, u))
-        return es
-
-    ea, eb = edgeset(la, neighbors_a), edgeset(lb, neighbors_b)
-    same_nodes = (len(set(int(x) for x in la)) == len(set(int(x) for x in lb))
-                  == len(set(int(x) for x in np.concatenate([la, lb]))))
-    ok = same_nodes and (ea == eb)
-    detail = {"V_a": len(set(int(x) for x in la)), "V_b": len(set(int(x) for x in lb)),
-              "E_a": len(ea), "E_b": len(eb), "E_shared": len(ea & eb),
-              "E_only_a": len(ea - eb), "E_only_b": len(eb - ea), "nodes_coincide": same_nodes}
-    return ok, detail
+    Uses NetworkX: VF2 (`nx.is_isomorphic`) is an EXACT certificate but backtracks badly on structured
+    lattice graphs (~40 s already at ~3600 nodes), so we only auto-select it for SMALL graphs (< 500 nodes,
+    e.g. self-dual validation checks). Larger graphs compare Weisfeiler-Leman hashes (fast at any size --
+    ~1 s at 20k -- strong evidence, not a certificate). Set `exact=True`/`False` to force. A vertex/edge-
+    count mismatch short-circuits to False."""
+    Ga, Gb = to_networkx(neighbors_a), to_networkx(neighbors_b)
+    sa = (Ga.number_of_nodes(), Ga.number_of_edges())
+    sb = (Gb.number_of_nodes(), Gb.number_of_edges())
+    if sa != sb:
+        return False, {"method": "size-mismatch", "a": sa, "b": sb}
+    if exact is None:
+        exact = sa[0] < 500
+    if exact:
+        ok, method = nx.is_isomorphic(Ga, Gb), "VF2 (exact)"
+    else:
+        ok, method = graph_hash(neighbors_a) == graph_hash(neighbors_b), "WL-hash (large graph)"
+    return ok, {"method": method, "V": sa[0], "E": sa[1]}
 
 
 # --------------------------------------------------------------------------- interior lattice signature
@@ -165,15 +84,15 @@ def interior_indices(coords, neighbors, margin_edges=2.5):
 
 def interior_signature(coords, neighbors, margin_edges=2.5):
     """The boundary-free fingerprint: the multiset of (degree, triangles) over interior nodes, plus the
-    single dominant pair and how uniform the interior is. A periodic lattice -> one dominant pair
-    covering ~all interior nodes; an aperiodic graph -> a spread."""
+    single dominant pair and how uniform the interior is. Triangle counts come from NetworkX. A periodic
+    lattice -> one dominant pair covering ~all interior nodes; an aperiodic graph -> a spread."""
     idx = interior_indices(coords, neighbors, margin_edges)
     if len(idx) == 0:
         return {"n_interior": 0, "dominant": None, "uniformity": 0.0, "pairs": {}}
-    tri = triangles_per_node(neighbors)
+    tri = nx.triangles(to_networkx(neighbors))                 # {node: #triangles through it}
     pairs = {}
     for i in idx:
-        key = (len(neighbors[i]), int(tri[i]))
+        key = (len(neighbors[i]), int(tri[int(i)]))
         pairs[key] = pairs.get(key, 0) + 1
     dom = max(pairs, key=pairs.get)
     return {"n_interior": int(len(idx)), "dominant": dom,
