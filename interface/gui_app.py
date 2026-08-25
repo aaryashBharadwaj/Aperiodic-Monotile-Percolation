@@ -2,30 +2,29 @@
 
     streamlit run interface/gui_app.py
 
-Three tabs behind one tiling picker:
+Four tabs behind one tiling picker:
   * Visualise  — generate the chosen tiling at a size you control and (optionally) overlay the exact
                  percolation graph, i.e. proof the generator produces the real shape + lattice.
-  * Percolate  — launch a run (any patch up to production), sweep L, finite-size-extrapolate the
-                 site & bond thresholds, report p_c, check for directional bias, and optionally
-                 measure the fractal dimension d_f. Runs auto-save.
-  * Analyse saved — reload any run from paper_results/npz/ (saved here or by runner/runner.py)
-                 and show the identical analysis.
+  * Percolate  — plan a run (any patch up to production): pick the patch, L-sweep and trials, preview
+                 the graph size / usable L / run-time / accuracy, and emit the exact runner/runner.py
+                 command. The sweep itself runs in a terminal (it checkpoints, resumes and auto-saves);
+                 the GUI deliberately doesn't launch or monitor the worker.
+  * Crossing (Cardy) — the conformal-invariance crossing test, run inline.
+  * Analyse saved — reload any run from paper_results/npz/ (saved by runner/runner.py) and show the
+                 finite-size analysis: p_c, direction-bias check, and the fractal dimension d_f.
 
-All numerics come from the same builders/kernels the runner uses (via gui_backend); the Percolate
-tab launches runner/runner.py in the background. Converged production numbers come from the same
-runner with a larger patch / more trials -- the 'Use paper settings' button, or the console
-(see REPRODUCE.md).
+All numerics come from the same builders/kernels the runner uses (via gui_backend). Converged
+production numbers come from runner/runner.py with a larger patch / more trials -- the 'Use paper
+settings' button fills the exact production parameters (see REPRODUCE.md).
 """
 import os
 import sys
-import time
 # gui_app is launched as `streamlit run interface/gui_app.py`, which puts interface/ (not the repo
 # root) on sys.path. Add the repo root so the package imports (interface.*, generators.*, ...) resolve.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 import interface.gui_backend as gb
 import visualiser.figures as figs
-import runner.jobs as jobs
 import interface.estimate as estimate           # NOT `est` -- a local float `est` shadows it below
 from engine.percolation import l_sweep
 
@@ -195,80 +194,6 @@ def show_results(res, label, key_prefix, meta=None):
                        file_name=f"{key_prefix}_convergence.png", key=f"{key_prefix}_dl_conv")
 
 
-def render_job_monitor(s):
-    """Progress + controls for the active background job; on completion loads and shows the saved
-    result. While the job is live it polls by sleeping briefly then rerunning — but the worker is a
-    separate process, so closing the tab or sleeping the machine doesn't stop it."""
-    jid = s["job_id"]
-    state = s.get("status", "?")
-    total = s.get("total") or 0
-    frac = (s.get("i", 0) / total) if total else 0.0
-    st.progress(min(max(frac, 0.0), 1.0),
-                text=f"{state} — {s.get('i', 0)}/{total}  ·  {s.get('last_line', '')}")
-    live = jobs.job_is_live(s)
-    if live:
-        c1, c2 = st.columns([1, 5])
-        if c1.button("Stop", key=f"stop_{jid}"):
-            jobs.stop_job(jid)
-            st.rerun()
-        c2.caption("Runs in the background — you can close the tab or let the machine sleep and "
-                   "reopen later; it checkpoints after every L and resumes.")
-        # Poll for progress, but do the sleep+rerun at the very END of the script (see bottom), NOT
-        # here -- this monitor renders inside the Percolate tab, and rerunning here would fire before
-        # the later tabs (Crossing / Analyse saved) get to draw, leaving them blank while a job runs.
-        st.session_state["_poll_monitor"] = True
-    elif state in jobs.LIVE_STATES:
-        # Status says live but the worker process is gone -> it was killed mid-run (crash / machine
-        # powered off) and never flipped its status. Don't poll a corpse (that's what kept a dead job
-        # showing "running" forever and the Run button disabled); show it as interrupted.
-        st.warning("This run's worker is no longer alive — it was interrupted. Its checkpoint is kept, "
-                   "so relaunching the same settings resumes from where it stopped.")
-        if st.button("Dismiss", key=f"dis_{jid}"):
-            st.session_state.pop("active_job", None)
-            st.rerun()
-    elif state == "error":
-        st.error("Run failed.")
-        st.code((s.get("error") or "")[:1200])
-        if st.button("Dismiss", key=f"dis_{jid}"):
-            st.session_state.pop("active_job", None)
-            st.rerun()
-    else:   # done | stopped
-        keep = st.session_state.get(f"keep_{jid}", True)
-        verb = "partial result" if state == "stopped" else "result"
-        (st.warning if state == "stopped" else st.success)(
-            f"✓ Complete — {verb} saved." if keep else
-            f"✓ Complete — exploratory run (the {verb} shows below, but was not saved to disk).")
-        rf = s.get("result_file")
-        if rf:
-            # Load ONCE and cache in session: we may delete the file (discard), and Streamlit reruns
-            # this block on every poll, so subsequent renders must come from the in-memory copy.
-            rkey = f"jobres_{jid}"
-            if rkey not in st.session_state:
-                try:
-                    st.session_state[rkey] = gb.load_saved(rf)
-                    if not keep:
-                        gb.delete_result(rf)              # exploratory: drop it from disk, keep in memory
-                except Exception as e:
-                    st.session_state[rkey] = None
-                    st.error(f"Run completed and saved, but the file could not be loaded: {e}")
-            stored = st.session_state.get(rkey)
-            if stored:
-                res, meta = stored
-                try:
-                    show_results(res, meta["member"], "job", meta=meta)
-                except Exception as e:
-                    # The result is fine; a PLOT failed to render (e.g. the known transient matplotlib
-                    # mathtext race under background threads). Say so honestly instead of "could not load".
-                    st.error(f"Result computed correctly, but a plot failed to render "
-                             f"(likely a transient rendering hiccup — rerun to redraw): {e}")
-                st.caption(f"Saved as paper_results/npz/{rf}" if keep
-                           else "🗑 Not saved (exploratory run — tick 'Save this run to results' to keep).")
-        else:
-            st.info("No result file (fewer than 3 usable sizes).")
-        if st.button("Clear this run", key=f"clrdone_{jid}"):
-            st.session_state.pop(f"jobres_{jid}", None)
-            st.session_state.pop("active_job", None)
-            st.rerun()
 
 
 # ============================================================ sidebar: tiling + graph + seed (shared)
@@ -502,84 +427,34 @@ with tab_run:
         st.error(f"≈ {_fmt_eta(eta)} — that's a long run. Raise the gap or cut trials, "
                  "or let it run (it's the production-scale sweep).")
     elif eta > 300:
-        st.warning(f"≈ {_fmt_eta(eta)} — heads up before you hit Run.")
+        st.warning(f"≈ {_fmt_eta(eta)} — heads up before you run it.")
 
-    # --- background run: a DETACHED worker process owns the sweep, so it survives the tab closing,
-    #     the machine sleeping (OS suspend/resume), and even this server dying; it checkpoints after
-    #     every L and resumes. We just launch it and poll its status file. The result auto-saves on
-    #     completion (an unattended overnight run must persist itself). ---
+    # This tab PLANS the run (geometry, sizes, ETA, accuracy) and emits the exact console command.
+    # The sweep itself runs in a terminal via runner/runner.py -- it reuses the identical kernels,
+    # seed and results, checkpoints and resumes if interrupted, and auto-saves to paper_results/npz/,
+    # from where the "Analyse saved" tab shows the finished run. (The GUI deliberately doesn't launch
+    # or monitor the worker: that kept a tangle of detached-process/liveness/poll code in the portal
+    # for no numeric benefit -- the console owns running, this tab owns getting the flags right.)
     st.markdown("---")
-    # Auto-reattach: if a run is still going (this tab was closed/reopened, or the server restarted),
-    # pick it up so the progress bar comes right back.
-    if not st.session_state.get("active_job"):
-        _live = [j for j in jobs.list_jobs() if jobs.job_is_live(j)]
-        if _live:
-            st.session_state["active_job"] = _live[0]["job_id"]
-
-    active = st.session_state.get("active_job")
-    _s = jobs.read_job_status(active) if active else None
-    _busy = bool(jobs.job_is_live(_s))
-
     want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
                            help="Largest-cluster pass: records the incipient-cluster size per trial -> the "
                                 "fractal dimension d_f (<s_max> ~ L^d_f), one of the two exponents that "
                                 "fix the universality class. Off by default to keep runs fast; the "
                                 "paper's universality runs turn it on.")
-    want_save = st.checkbox("Save this run to results", value=True,
-                            help="On (default): the result is kept in paper_results/npz/. Off: an "
-                                 "exploratory run — it still computes and displays, but is discarded "
-                                 "from disk when done, so the results folder stays an intentional record.")
-    if st.button("Run percolation", type="primary", disabled=(n_used < 3) or _busy):
-        jid = jobs.launch_job(tiling, member, graph_type, kind, patch, round(a, 3), round(b, 3),
-                            L_min, L_max, gap, int(T), int(seed), exponents=want_exp)
-        st.session_state[f"keep_{jid}"] = bool(want_save)   # GUI-side keep/discard decision
-        st.session_state["active_job"] = jid
-        st.rerun()
-    if not _busy:
-        st.caption("Launches a background process — it keeps running if you close the tab or the "
-                   "machine sleeps. Kept runs save to paper_results/npz/ when done.")
 
-    # The exact console command for the current settings — the Run button just launches this. Handy
-    # for a headless box, a machine you won't keep the browser open on, or scripting a batch.
-    with st.expander("Run from a console instead"):
-        _gsh = "dual" if kind == "dual" else "direct"
-        _parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
-        if tiling == gb.FAMILY:
-            _parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
-        _parts += [f"--patch {patch}", f"--lmin {L_min:g}", f"--lmax {L_max:g}", f"--gap {gap:g}",
-                   f"--trials {int(T)}", f"--seed {int(seed)}"]
-        if want_exp:
-            _parts.append("--exponents")
-        st.code("python runner/runner.py " + " ".join(_parts), language="bash")
-        st.caption("Same computation as the button (identical kernels, seed and results). Run it "
-                   "from the project folder. It checkpoints and resumes if interrupted, and saves "
-                   "to paper_results/npz/ — so it also shows up under 'Analyse saved' and in the "
-                   "background-jobs list above.")
-
-    # Other jobs (finished, or running from another session) — reattach or clean up. Rendered BEFORE
-    # the live monitor so it stays visible while the monitor is polling.
-    others = [j for j in jobs.list_jobs() if j.get("job_id") != active]
-    if others:
-        with st.expander(f"Background jobs ({len(others)})"):
-            for j in others:
-                c0, c1, c2 = st.columns([4, 1, 1])
-                _stat = j.get("status", "?")
-                if _stat in jobs.LIVE_STATES and not jobs.job_is_live(j):
-                    _stat = "interrupted"     # worker gone; status never flipped
-                c0.write(f"**{j.get('member', '?')} · {j.get('kind', '')}** — "
-                         f"{_stat} ({j.get('i', 0)}/{j.get('total', 0)})")
-                if c1.button("Monitor", key=f"mon_{j['job_id']}"):
-                    st.session_state["active_job"] = j["job_id"]
-                    st.rerun()
-                if c2.button("Clear", key=f"clr_{j['job_id']}"):
-                    jobs.clear_job(j["job_id"])
-                    st.rerun()
-
-    if active and _s:
-        st.divider()
-        render_job_monitor(_s)
-    elif active and _s is None:
-        st.session_state.pop("active_job", None)   # stale reference; forget it
+    _gsh = "dual" if kind == "dual" else "direct"
+    _parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
+    if tiling == gb.FAMILY:
+        _parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
+    _parts += [f"--patch {patch}", f"--lmin {L_min:g}", f"--lmax {L_max:g}", f"--gap {gap:g}",
+               f"--trials {int(T)}", f"--seed {int(seed)}"]
+    if want_exp:
+        _parts.append("--exponents")
+    st.markdown("**Run this in a terminal**, from the project folder:")
+    st.code("python runner/runner.py " + " ".join(_parts), language="bash")
+    st.caption("Identical kernels, seed and results as the rest of the portal. It checkpoints and "
+               "resumes if interrupted, and saves to paper_results/npz/ — open the finished run under "
+               "the “Analyse saved” tab.")
 
 
 # ============================================================ CARDY CROSSING TEST
@@ -671,13 +546,3 @@ with tab_analyse:
             show_results(res, meta["member"], "an", meta=meta)
         except Exception as e:
             st.error(f"Could not load {pick}: {e}")
-
-
-# ============================================================ background-job poll (MUST be last)
-# The Percolate tab's job monitor asks to auto-refresh by setting _poll_monitor. We do the actual
-# sleep+rerun HERE, after every tab has rendered -- so a running job never pre-empts the later tabs
-# (Crossing / Analyse saved) from drawing. (A GUI Run, or any console `runner.py` writing to the
-# shared jobs/ dir, triggers this via auto-reattach.)
-if st.session_state.pop("_poll_monitor", False):
-    time.sleep(2)
-    st.rerun()
