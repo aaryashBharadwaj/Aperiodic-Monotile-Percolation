@@ -295,7 +295,7 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
     # 0 -> let each stats class fall back to its _NW default; a positive value overrides it.
     nwkw = {"nworkers": int(nworkers)} if nworkers and int(nworkers) > 0 else {}
     # Window cap: bundle["side_cap"] is the MEASURED largest fully-tiled+surrounded window (the off-tile
-    # oracle, builders.solid_window / tests/verify_solid_windows) -- 0% off-tile by construction, tight on
+    # oracle, builders.solid_window / builders.verify_solid_windows) -- 0% off-tile by construction, tight on
     # the ragged folded-endpoint boundaries where the old 0.95*side heuristic over-reached. build_graph
     # sets it; it falls back to 0.95*side only for uncalibrated configs. A window past it clips the fringe
     # and biases spanning, so reject it (the paper presets all sit at side_cap).

@@ -6,7 +6,7 @@ that wasn't even enough for the fractal-boundary folded endpoints. This replaces
 measurement: sample a grid over a candidate window and require it to be fully covered by tile polygons,
 plus a small tiled buffer so the window is SURROUNDED (hence fully coordinated, not just gap-free).
 `measure_solid_L` binary-searches the largest such window. The result is verifiable by the same test
-that produced it (tests/verify_solid_windows.py). No percentage fudge anywhere.
+that produced it (builders/verify_solid_windows.py). No percentage fudge anywhere.
 """
 import numpy as np
 from scipy.spatial import cKDTree

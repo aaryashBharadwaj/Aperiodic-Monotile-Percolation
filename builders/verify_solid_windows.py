@@ -11,8 +11,8 @@ window run_one would actually use, samples a dense grid across it, and confirms 
 inside some tile polygon. off-tile fraction ~ 0  =>  the window is genuinely gap-free and the cap is safe.
 A nonzero fraction means the window pokes a gap/fringe and the cap over-reaches on that member.
 
-Run:  python tests/verify_solid_windows.py            # default member set
-      python tests/verify_solid_windows.py Hat 6      # one member at a given patch
+Run:  python builders/verify_solid_windows.py            # default member set
+      python builders/verify_solid_windows.py Hat 6      # one member at a given patch
 """
 import os
 import sys

@@ -1000,7 +1000,7 @@ with tab_run:
                "calibrated)")
         st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
                    f"(bigger windows fall outside the tiling and are skipped). This is {how}; "
-                   "`tests/verify_solid_windows.py` reproduces the check.")
+                   "`builders/verify_solid_windows.py` reproduces the check.")
 
         st.markdown("**Parameters**")
         st.session_state.setdefault("perc_lmin", 10.0)
