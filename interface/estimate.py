@@ -1,96 +1,41 @@
-"""Pre-run estimation for the percolation GUI: the machine-dependent per-trial cost calibration
-(calibrate -> gui_calib.json), the machine-independent tiling geometry (calibrate_geometry ->
-gui_geometry.json), and the no-build node-count + ETA + accuracy readouts the UI shows before a run.
-Split out of gui_backend so that module stays focused on building/running graphs.
+"""Pre-run estimation for the percolation GUI, from geometry alone -- no per-machine timer.
 
-    plan_run(member, kind, patch, L_values, T)   -> estimated node count + usable-L range + ETA
-    geometry(member, kind, patch)                -> (nodes, side) WITHOUT building the patch
-    accuracy_estimate(...)                       -> a broad digits-of-p_c band
-    calibrate / calibrate_geometry               -> (re)fit the two on-disk models
+    plan_run / plan_cardy   -> node count + usable sizes + a COARSE order-of-magnitude run-scale
+    geometry(member,...)    -> (nodes, side) WITHOUT building the patch
+    accuracy_estimate(...)  -> a broad digits-of-p_c band
+    calibrate_geometry / calibrate_solid_windows -> (re)fit the two machine-INDEPENDENT on-disk models
 
-Shared kernels/constants (build_graph, run_one, warm_up, _frame_data, default_bt, TRI, REPO_ROOT,
-LAUNCH_OVERHEAD_S) are imported from interface.gui_backend; the dependency is one-way.
+There is deliberately no per-machine timing calibration: the pre-run number is only a rough nudge
+(seconds vs overnight), and the runner (runner/runner.py) prints an ACCURATE live ETA from the first
+completed size once a sweep actually starts. Shared kernels/constants (build_graph, _frame_data,
+default_bt, TRI, LAUNCH_OVERHEAD_S) come from interface.gui_backend; the dependency is one-way.
 """
 import os
 import math
 import json
 import time
 
-from interface.gui_backend import (REPO_ROOT, build_graph, run_one, warm_up, _frame_data,
-                                    default_bt, TRI, TILE11, COMET_AP, CHEVRON_AP, LAUNCH_OVERHEAD_S)
+from interface.gui_backend import (build_graph, _frame_data, default_bt, TRI, TILE11,
+                                    COMET_AP, CHEVRON_AP, LAUNCH_OVERHEAD_S)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))                 # this interface/ folder (the GUI's config lives beside it)
-CALIB_PATH = os.path.join(_HERE, "gui_calib.json")                 # machine-dependent: per-trial cost (gitignored)
 GEOM_PATH = os.path.join(_HERE, "gui_geometry.json")               # machine-independent: precomputed tiling geometry
 SOLID_PATH = os.path.join(_HERE, "solid_windows.json")             # measured max fully-tiled window per (member,kind,patch)
 
-
-def _default_calib():
-    # Per-node trial cost GROWS with frame size (cache effects): model it as c_a + c_b*ln(N) seconds
-    # per (frame node x 4 estimators). Defaults fitted from a reference machine; refined by calibrate().
-    return {"c_a": -4.8e-7, "c_b": 6.2e-8}
-
-
-def load_calib():
-    try:
-        with open(CALIB_PATH) as f:
-            c = json.load(f)
-        return c if "c_b" in c else _default_calib()   # ignore stale flat-cost calib files
-    except Exception:
-        return _default_calib()
+# Fixed per-node-trial cost for the COARSE pre-run "run scale" the UI shows. This is deliberately NOT
+# a per-machine calibration: the pre-run number is only an order-of-magnitude nudge (seconds vs
+# overnight), and the runner prints an ACCURATE live ETA from the first size once a sweep actually
+# starts. ~390 ns per node-trial for run_one's four estimators on the reference machine (run manifest
+# 2026-08-19, where the cost was measured FLAT in N -- no cache growth); a crossing is ~1/4 of that.
+_C_NODE_S = 390e-9
 
 
-def _c_per_node(calib, N):
-    """Per-node trial cost at frame size N, s per (node x 4 estimators). Grows ~ln(N) (cache)."""
-    return max(calib.get("c_a", 0.0) + calib.get("c_b", 0.0) * math.log(max(N, 10)), 3.0e-8)
-
-
-def _time_frame(bundle, L, T, bt=1.0):
-    """Time the FULL per-size cost of one frame exactly as the sweep pays it -- frame extraction
-    (window cut + sub-graph build + boundary detection) PLUS the 4 estimators, i.e. one run_one.
-    Timing only the kernels (as before) left out the frame cost and made the ETA under-predict.
-    Returns (frame nodes N, seconds per node per trial) or None if the frame is unusable."""
-    t0 = time.perf_counter()
-    step = run_one(bundle, L, T, 1, bt)
-    dt = time.perf_counter() - t0
-    if not step.get("usable"):
-        return None
-    N = step["N"]
-    return N, dt / (T * N)
-
-
-def calibrate(save=True):
-    """Fit the size-dependent per-node cost c(N) = c_a + c_b*ln(N) from a small and a large frame
-    (hat r=5). Two points because per-node cost grows with frame size (cache); a single flat cost
-    badly underestimates the big production sweeps. Machine-dependent -> gui_calib.json."""
-    warm_up()
-    t_b = time.perf_counter()
-    bundle = build_graph("Hat", "Direct (vertex)", 5)
-    build_ref_cpn = (time.perf_counter() - t_b) / max(bundle["nodes"], 1)   # this machine's build s/node
-    side = bundle["side"]
-    small = _time_frame(bundle, 0.30 * side, 200)     # ~tens of thousands of nodes
-    large = _time_frame(bundle, 0.72 * side, 100)     # ~hundreds of thousands of nodes
-    if small and large and large[0] > small[0]:
-        (N1, c1), (N2, c2) = small, large
-        c_b = (c2 - c1) / (math.log(N2) - math.log(N1))
-        c_a = c1 - c_b * math.log(N1)
-        calib = {"c_a": float(c_a), "c_b": float(c_b), "fit_points": [[N1, c1], [N2, c2]]}
-    else:
-        calib = _default_calib()
-    calib["build_ref_cpn"] = float(build_ref_cpn)
-    if save:
-        os.makedirs(os.path.dirname(CALIB_PATH), exist_ok=True)
-        with open(CALIB_PATH, "w") as f:
-            json.dump(calib, f, indent=2)
-    return calib
-
-
-# ----------------------------------------------------------------------------- geometry (no-build ETA)
-# The ETA splits into a machine-dependent per-node cost (c_a, c_b from calibrate) and a machine-
-# INDEPENDENT part: the tiling's in-frame node DENSITY and the patch's inscribed-square SIDE. Density
-# is scale-invariant for the inflation tilings (inflating the hat tiles a bigger area at the same
-# density), so we predict a big patch's size WITHOUT building it -- build only the cheap patches once,
-# extrapolate the rest. The UI shows size + ETA for r=6 instantly; the heavy graph is built only on Run.
+# ----------------------------------------------------------------------------- geometry (no-build size)
+# The tiling's in-frame node DENSITY and the patch's inscribed-square SIDE are machine-INDEPENDENT.
+# Density is scale-invariant for the inflation tilings (inflating the hat tiles a bigger area at the
+# same density), so we predict a big patch's size WITHOUT building it -- build only the cheap patches
+# once, extrapolate the rest. The UI shows the node count + usable window for r=6 instantly; the heavy
+# graph is built only when the run actually happens (in a terminal).
 def _measure_geom(member, kind, patch):
     """Build a patch and return (total_nodes, inscribed side, TRUE in-frame node density).
     The frame density -- node_count in an interior L×L window / L^2 -- is what the ETA needs; the
@@ -252,9 +197,10 @@ def _frame_density(g, patch):
     return t[str(min(ks, key=lambda z: abs(z - patch)))][2]
 
 
-def plan_run(member, kind, patch, L_values, T, calib=None):
-    """Pre-run plan from geometry alone (NO graph build): estimated node count, usable-L range, ETA.
-    ETA uses the TRUE frame density, not the whole-patch density. Returns None if geometry missing."""
+def plan_run(member, kind, patch, L_values, T):
+    """Pre-run plan from geometry alone (NO graph build): estimated node count, usable-L range, and a
+    COARSE machine-independent run-scale in seconds (nodes x trials x a fixed reference per-node cost;
+    the runner prints the accurate live ETA once the sweep starts). Returns None if geometry missing."""
     g = load_geom().get(f"{member}|{kind}")
     ge = geometry(member, kind, patch)
     if not g or ge is None:
@@ -262,38 +208,26 @@ def plan_run(member, kind, patch, L_values, T, calib=None):
     nodes_est, side = ge
     usable_max = solid_window(member, kind, patch) or 0.95 * side   # measured cap; 0.95*side fallback
     usable = [L for L in L_values if L <= usable_max]
-    calib = calib or load_calib()
     density = _frame_density(g, patch)
-    # Sum the cost per L using the SIZE-DEPENDENT per-node cost: N(L)=density*L^2, and larger frames
-    # cost more per node (cache), so the big production sweeps aren't wildly underestimated.
-    sweep_eta = T * sum(density * L * L * _c_per_node(calib, density * L * L) for L in usable)
-    # Graph build is a one-time cost the elapsed clock DOES pay, so the ETA must include it or it
-    # under-reports (build alone can exceed the whole sweep). Build is linear in patch nodes; the
-    # per-node cost is builder-specific (dual >> direct), stored per member|kind in the geometry file
-    # and rescaled to THIS machine via the hat|direct build speed measured in calibrate().
-    build_cpn = g.get("build_cpn", 0.0)
-    geom_ref = load_geom().get("Hat|direct", {}).get("build_cpn", 0.0)
-    mach = (calib.get("build_ref_cpn", geom_ref) / geom_ref) if geom_ref else 1.0
-    build_eta = build_cpn * nodes_est * mach
-    # Each run now launches a FRESH worker process, which pays a flat startup cost the sweep/build
-    # models don't see: importing the stack (numba/scipy/matplotlib ~3s) + numba JIT warm-up. Small
-    # (~6s typical; the very first run after a cold numba cache can be longer), but without it a tiny
-    # sweep reads as "a few seconds" when the wall time is really ~10s+. Add it as a flat term.
-    eta = LAUNCH_OVERHEAD_S + build_eta + sweep_eta
-    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max, "n_usable": len(usable),
-            "eta": eta, "build_eta": build_eta, "sweep_eta": sweep_eta, "launch_eta": LAUNCH_OVERHEAD_S}
+    # N(L) = density*L^2; the sweep pays ~_C_NODE_S per node-trial (flat in N -- run manifest). Plus the
+    # one-time graph build (linear in patch nodes, reference-machine per-node cost) and worker startup.
+    sweep_s = _C_NODE_S * T * sum(density * L * L for L in usable)
+    build_s = g.get("build_cpn", 0.0) * nodes_est
+    scale_s = LAUNCH_OVERHEAD_S + build_s + sweep_s
+    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max,
+            "n_usable": len(usable), "scale_s": scale_s}
 
 
 # run_crossing measures ONE spanning estimator per trial; run_one measures four (site/bond x span/
 # cluster), so a crossing costs ~1/4 the per-node-trial of the p_c sweep (matches the ~96ns vs ~390ns
-# measured in the run manifest). Coarse -- it's an ETA, not a promise.
+# measured in the run manifest). Coarse -- an order-of-magnitude nudge, not a promise.
 _CROSSING_COST_FRAC = 0.25
 
 
-def plan_cardy(member, kind, patch, windows, n_aspects, T, calib=None):
+def plan_cardy(member, kind, patch, windows, n_aspects, T):
     """Pre-run plan for a Cardy crossing sweep from geometry alone (NO graph build): node count, which
-    windows fit, the RMS noise floor, and a coarse ETA. Each window runs 1 square anchor + n_aspects
-    rectangles, all at area ~ L^2. Returns None if geometry is missing."""
+    windows fit, the RMS noise floor, and a COARSE machine-independent run-scale. Each window runs 1
+    square anchor + n_aspects rectangles, all at area ~ L^2. Returns None if geometry is missing."""
     g = load_geom().get(f"{member}|{kind}")
     ge = geometry(member, kind, patch)
     if not g or ge is None:
@@ -301,18 +235,13 @@ def plan_cardy(member, kind, patch, windows, n_aspects, T, calib=None):
     nodes_est, side = ge
     usable_max = solid_window(member, kind, patch) or 0.9 * side
     usable = [L for L in windows if L <= usable_max]
-    calib = calib or load_calib()
     density = _frame_density(g, patch)
-    per_window = lambda L: ((1 + n_aspects) * T * density * L * L
-                            * _c_per_node(calib, density * L * L) * _CROSSING_COST_FRAC)
-    sweep_eta = sum(per_window(L) for L in usable)
-    build_cpn = g.get("build_cpn", 0.0)
-    geom_ref = load_geom().get("Hat|direct", {}).get("build_cpn", 0.0)
-    mach = (calib.get("build_ref_cpn", geom_ref) / geom_ref) if geom_ref else 1.0
-    build_eta = build_cpn * nodes_est * mach
-    eta = LAUNCH_OVERHEAD_S + build_eta + sweep_eta
+    per_window = lambda L: ((1 + n_aspects) * T * density * L * L * _C_NODE_S * _CROSSING_COST_FRAC)
+    sweep_s = sum(per_window(L) for L in usable)
+    build_s = g.get("build_cpn", 0.0) * nodes_est
+    scale_s = LAUNCH_OVERHEAD_S + build_s + sweep_s
     return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max, "n_usable": len(usable),
-            "n_crossings": (1 + n_aspects) * len(usable), "eta": eta,
+            "n_crossings": (1 + n_aspects) * len(usable), "scale_s": scale_s,
             "floor": math.sqrt(0.25 / max(int(T), 1))}
 
 

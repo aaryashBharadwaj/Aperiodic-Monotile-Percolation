@@ -274,14 +274,6 @@ with st.sidebar:
 
     st.session_state.setdefault("perc_seed", 123456789)
     seed = int(st.number_input("Seed", step=1, key="perc_seed"))
-    st.divider()
-    if st.button("Recalibrate timer", help="Re-measure the per-trial cost on this machine; "
-                                           "the run-time estimates then use it."):
-        with st.spinner("Calibrating…"):
-            c = estimate.calibrate()
-        per = estimate._c_per_node(c, 100_000) * 1e9   # ns per node·trial at a ~100k-node frame
-        st.success(f"Recalibrated — estimates now use this machine (~{per:.0f} ns/node·trial "
-                   "at a 100k-node frame).")
 
 
 st.title("Aperiodic Monotile Percolation Portal")
@@ -360,22 +352,15 @@ with tab_run:
              "aspect ratio, against Cardy's exact 2D-percolation curve.")
     is_cardy = run_type.startswith("Crossing")
 
-    def _fmt_eta(s):
-        # Coarse bands, from geometry + this machine's calibration. Ranges, not exact minutes.
-        if s < 10:    return "a few seconds"
-        if s < 30:    return "under half a minute"
-        if s < 60:    return "under a minute"
-        if s < 120:   return "1–2 minutes"
-        if s < 300:   return "2–5 minutes"
-        if s < 600:   return "5–10 minutes"
-        if s < 1200:  return "10–20 minutes"
-        if s < 1800:  return "20–30 minutes"
-        if s < 2700:  return "30–45 minutes"
-        if s < 3600:  return "45–60 minutes"
-        if s < 7200:  return "1–2 hours"
-        if s < 14400: return "2–4 hours"
-        if s < 28800: return "4–8 hours"
-        return "8+ hours"
+    def _scale_band(s):
+        # A machine-INDEPENDENT order-of-magnitude nudge (no per-machine timer). The runner prints the
+        # accurate live ETA once the sweep starts, so this is deliberately qualitative -- seconds vs
+        # overnight is the only distinction it's honest about.
+        if s < 30:      return "seconds"
+        if s < 600:     return "minutes"
+        if s < 3600:    return "up to ~an hour"
+        if s < 6 * 3600: return "a few hours"
+        return "hours (overnight)"
 
     def _fmt_count(n):
         if n >= 1_000_000: return f"{n/1e6:.1f}M"
@@ -474,25 +459,25 @@ with tab_run:
         Ls = l_sweep(L_min, L_max, gap)                    # SHARED engine definition -> identical sizes
         plan = estimate.plan_run(member, kind, patch, Ls, T) if Ls else None
         n_used = plan["n_usable"] if plan else 0
-        eta = plan["eta"] if plan else 0.0
+        scale_s = plan["scale_s"] if plan else 0.0
         accuracy = estimate.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Graph nodes ~", _fmt_count(plan["nodes_est"]) if plan else "—",
                   help=(f"~{plan['nodes_est']:,} nodes, from geometry (not yet built)." if plan
                         else "Set a valid sweep."))
         m2.metric("Usable L", f"{n_used} / {len(Ls)}")
-        m3.metric("Est. run time", _fmt_eta(eta),
-                  help="Geometry + this machine's calibration: build + sweep + worker startup. A range, "
-                       "not an exact time. Hit 'Recalibrate timer' if it drifts.")
+        m3.metric("Run scale", _scale_band(scale_s) if plan else "—",
+                  help="Rough, machine-independent order of magnitude (nodes × trials at a fixed "
+                       "reference ~390 ns/node·trial). The runner prints an ACCURATE live ETA from the "
+                       "first size once the sweep starts.")
         m4.metric("Est. accuracy", accuracy,
                   help="Rough band for the digits of p_c this L-range and trial count buy. Small "
                        "patches are also finite-size biased (the value itself is off).")
         if n_used < 3:
             st.error("Fewer than 3 usable L values — raise the patch, lower L min, or shrink the gap.")
-        elif eta > 1200:
-            st.error(f"≈ {_fmt_eta(eta)} — that's a long run (the production-scale sweep).")
-        elif eta > 300:
-            st.warning(f"≈ {_fmt_eta(eta)} — heads up before you run it.")
+        elif scale_s > 6 * 3600:
+            st.info("Overnight-scale run — copy the command into a terminal; its live ETA will confirm "
+                    "the real time once it starts.")
     else:
         try:
             windows = [float(x) for x in windows_txt.replace(";", ",").split(",") if x.strip()]
@@ -501,24 +486,23 @@ with tab_run:
         cplan = estimate.plan_cardy(member, kind, patch, windows, int(n_aspects), int(cT)) if windows \
             else None
         n_used = cplan["n_usable"] if cplan else 0
-        eta = cplan["eta"] if cplan else 0.0
+        scale_s = cplan["scale_s"] if cplan else 0.0
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Graph nodes ~", _fmt_count(cplan["nodes_est"]) if cplan else "—")
         m2.metric("Usable windows", f"{n_used} / {len(windows)}")
-        m3.metric("Est. run time", _fmt_eta(eta),
-                  help="Coarse: each window is 1 square + N aspect rectangles; a crossing costs ~¼ the "
-                       "p_c per-node-trial. Ranges, not exact.")
+        m3.metric("Run scale", _scale_band(scale_s) if cplan else "—",
+                  help="Rough, machine-independent order of magnitude (each window = 1 square + N aspect "
+                       "rectangles; a crossing costs ~¼ a p_c per-node·trial). The strong tier is hours "
+                       "— that's why it belongs in a terminal, not the browser.")
         m4.metric("RMS noise floor", f"{cplan['floor']:.4f}" if cplan else "—",
                   help="√(1/4T): the statistical floor the RMS(measured − Cardy) can reach. Lower T "
                        "means a noisier curve.")
         if n_used < 1:
             st.error("No usable windows — all are larger than this patch allows. Use smaller window "
                      "sizes, or raise the patch.")
-        elif eta > 1200:
-            st.error(f"≈ {_fmt_eta(eta)} — that's a long run (the strong tier is hours; that's why it "
-                     "belongs in a terminal, not the browser).")
-        elif eta > 300:
-            st.warning(f"≈ {_fmt_eta(eta)} — heads up before you run it.")
+        elif scale_s > 6 * 3600:
+            st.info("Overnight-scale run — copy the command into a terminal (the strong Cardy tier is "
+                    "genuinely hours).")
 
     # ---- emit the exact command ----
     st.markdown("---")

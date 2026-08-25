@@ -547,12 +547,12 @@ def load_saved(fname, out_dir=None):
 LAUNCH_OVERHEAD_S = 6.0                                          # imported by interface.estimate (plan_run)
 
 
-# ----------------------------------------------------------------------------- geometry (no-build ETA)
-# The ETA splits into a machine-dependent per-node cost (c_a, c_b from calibrate) and a machine-
-# INDEPENDENT part: the tiling's in-frame node DENSITY and the patch's inscribed-square SIDE. Density
-# is scale-invariant for the inflation tilings (inflating the hat tiles a bigger area at the same
-# density), so we predict a big patch's size WITHOUT building it -- build only the cheap patches once,
-# extrapolate the rest. The UI shows size + ETA for r=6 instantly; the heavy graph is built only on Run.
+# ----------------------------------------------------------------------------- geometry (no-build size)
+# The tiling's in-frame node DENSITY and the patch's inscribed-square SIDE are machine-INDEPENDENT, and
+# density is scale-invariant for the inflation tilings (inflating the hat tiles a bigger area at the
+# same density), so we predict a big patch's node count WITHOUT building it -- build the cheap patches
+# once, extrapolate the rest. The UI shows the size for r=6 instantly; the heavy graph is built only on
+# Run. (There is no per-machine timer: the runner prints the accurate live ETA once a sweep starts.)
 def default_bt(member):
     """Boundary-band thickness for the frame. Penrose's vertex graph is sparser (larger spacing),
     so it needs a thicker band to catch boundary nodes; everything else uses 1.0."""
