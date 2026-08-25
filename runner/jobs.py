@@ -1,33 +1,28 @@
-"""Background-job plumbing for the percolation GUI. A GUI run launches runner.py as a DETACHED OS
-process that reuses the exact kernels in gui_backend (build_graph + run_one), checkpoints after every
-L, and writes a small JSON status file. Split out of gui_backend so the job/status/launch machinery
-lives on its own; both the GUI and the worker (runner/runner.py) use it.
+"""Checkpoint/status plumbing for percolation runs.
 
-    launch_job(...)          -> spawn runner.py detached, return its job id
-    make_job_id / job_paths  -> deterministic id + on-disk paths (status/ckpt/log/stop)
-    write_status / read_job_status / list_jobs / stop_job / clear_job
+runner/runner.py uses this to give each run a deterministic id (so an interrupted run resumes from
+its OWN checkpoint instead of starting over) and to write its status/checkpoint files atomically.
 
-Shared paths (REPO_ROOT, RESULTS_DIR) are imported from interface.gui_backend; the dependency is
-one-way (gui_backend never imports this module).
+    make_job_id / job_paths   -> deterministic id + on-disk paths (status / ckpt / log / stop)
+    write_status / _safe_replace -> atomic status and checkpoint writes
+
+This module formerly also launched runner.py as a detached process and polled it for the GUI's
+progress bar. That path was removed -- the GUI now just emits the exact `runner.py` command to run in
+a terminal -- so only the pieces the worker itself needs remain here (launch/liveness/list/stop were
+GUI-only and are gone). RESULTS_DIR comes from interface.gui_backend; the dependency is one-way
+(gui_backend never imports this module).
 """
 import os
-import sys
 import time
 import json
-import glob
 import hashlib
-import subprocess
 
-from interface.gui_backend import REPO_ROOT, RESULTS_DIR
+from interface.gui_backend import RESULTS_DIR
 
 
-# ============================================================ BACKGROUND JOBS
-# A GUI run launches runner.py as a DETACHED OS process that reuses the exact kernels here
-# (build_graph + run_one), checkpoints after every L, and writes a small JSON status file. Because
-# it's a real process (not the browser rerun-loop), it survives the tab closing, the machine
-# sleeping (OS suspend/resume), and even the Streamlit server dying; a full restart/crash resumes
-# from the checkpoint. The GUI just polls the status JSON to draw a progress bar. This makes the CLI
-# runners the same "engine" the GUI button drives, rather than a separate path.
+# A run checkpoints after every L and writes a small JSON status file next to its checkpoint, so a
+# crash / machine power-off resumes from the last completed size. These paths and the atomic writers
+# are shared with the worker (runner/runner.py).
 JOBS_DIR = os.path.join(RESULTS_DIR, "jobs")
 
 
@@ -72,136 +67,10 @@ def _safe_replace(src, dst, tries=25, delay=0.05):
 
 
 def write_status(jid, d):
-    """Atomic status write (tmp + replace) so the GUI never reads a half-written file. The tmp name
-    is pid-unique because both the launcher process and the worker process write the same status."""
+    """Atomic status write (tmp + replace) so a reader never sees a half-written file. The tmp name is
+    pid-unique so concurrent writers can't clobber each other's temp file."""
     p = job_paths(jid)["status"]
     tmp = p + f".{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(d, f)
     _safe_replace(tmp, p)
-
-
-def read_job_status(jid):
-    try:
-        with open(job_paths(jid)["status"]) as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-LIVE_STATES = ("launching", "building", "running", "finalising")
-
-
-def _pid_alive(pid):
-    """True if a process with this pid is currently running. Used to tell a genuinely-running worker
-    from a stale 'running' status left by a worker that was killed (crash, machine powered off) and
-    never got to flip its status to done/error."""
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        import ctypes
-        SYNCHRONIZE = 0x00100000
-        k = ctypes.windll.kernel32
-        h = k.OpenProcess(SYNCHRONIZE, False, pid)
-        if not h:
-            return False                       # no such process (or it already exited)
-        try:
-            return k.WaitForSingleObject(h, 0) != 0   # 0 == WAIT_OBJECT_0 == signalled == exited
-        finally:
-            k.CloseHandle(h)
-    else:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True                        # exists but not ours to signal
-        return True
-
-
-def job_is_live(s):
-    """A job counts as live only if its status is a live state AND its worker process is actually
-    alive. A worker killed mid-run leaves a 'running' status that never flips -- without this check
-    that stale status shows as running forever and (worse) keeps the Run button disabled. The
-    'launching' placeholder is written before the worker exists, so give it a short grace window
-    before demanding a live pid."""
-    if not s or s.get("status") not in LIVE_STATES:
-        return False
-    pid = s.get("pid")
-    if pid is None:
-        return (time.time() - s.get("started", 0)) < 30.0
-    return _pid_alive(pid)
-
-
-def list_jobs():
-    """All known jobs (running + finished), newest activity first."""
-    out = []
-    for f in glob.glob(os.path.join(_jobs_dir(), "*.json")):
-        try:
-            with open(f) as fh:
-                out.append(json.load(fh))
-        except Exception:
-            pass
-    return sorted(out, key=lambda s: s.get("updated", 0), reverse=True)
-
-
-def stop_job(jid):
-    """Cooperative stop: drop a flag file the worker checks between sizes (so it still saves what it
-    has). Latency is one L, same as the old in-tab Stop."""
-    open(job_paths(jid)["stop"], "w").close()
-
-
-def clear_job(jid):
-    """Forget a finished job (remove its status/checkpoint/log/flag). The final result npz in
-    paper_results/npz/ is NOT touched."""
-    for k, p in job_paths(jid).items():
-        for cand in (p, p + ".tmp"):
-            try:
-                os.remove(cand)
-            except OSError:
-                pass
-
-
-def launch_job(tiling, member, graph_type, kind, patch, a, b, Lmin, Lmax, gap, T, seed, name=None,
-               exponents=False):
-    """Spawn runner.py detached and return its job id. Reuses an existing checkpoint (same
-    params) automatically. The process outlives this Streamlit server. exponents=True adds the
-    largest-cluster d_f pass (--exponents)."""
-    jd = _jobs_dir()
-    jid = make_job_id(member, kind, patch, a, b, Lmin, Lmax, gap, T, seed)
-    # Clear any stale stop flag from a previous run of this id.
-    try:
-        os.remove(job_paths(jid)["stop"])
-    except OSError:
-        pass
-    worker = os.path.join(REPO_ROOT, "runner", "runner.py")
-    argv = [sys.executable, worker, "--job-id", jid, "--tiling", tiling, "--member", member,
-            "--graph", graph_type, "--kind", kind, "--patch", str(patch), "--a", str(a),
-            "--b", str(b), "--lmin", str(Lmin), "--lmax", str(Lmax), "--gap", str(gap),
-            "--trials", str(int(T)), "--seed", str(int(seed)), "--jobs-dir", jd,
-            "--out-dir", RESULTS_DIR,
-            "--name", name or ""]
-    if exponents:
-        argv.append("--exponents")
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", MPLBACKEND="Agg")
-    with open(job_paths(jid)["log"], "w") as logf:   # child inherits its own handle; close ours
-        if os.name == "nt":
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT, env=env, close_fds=True,
-                             cwd=REPO_ROOT,
-                             creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-        else:
-            subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT, env=env, close_fds=True,
-                             cwd=REPO_ROOT, start_new_session=True)
-    # Immediate placeholder so the UI shows the job before the worker's first write.
-    write_status(jid, {"job_id": jid, "status": "launching", "i": 0, "total": 0, "n_valid": 0,
-                       "member": member, "kind": kind, "patch": patch, "seed": int(seed),
-                       "trials": int(T), "lmin": Lmin, "lmax": Lmax, "gap": gap, "last_line": "",
-                       "started": time.time(), "updated": time.time(), "result_file": None,
-                       "error": None, "name": name or ""})
-    return jid
