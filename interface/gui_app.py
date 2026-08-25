@@ -2,9 +2,10 @@
 
     streamlit run interface/gui_app.py
 
-Three tabs behind one tiling picker:
-  * Visualise  — generate the chosen tiling at a size you control and (optionally) overlay the exact
-                 percolation graph, i.e. proof the generator produces the real shape + lattice.
+Three tabs, each with its own tiling/graph picker (no shared control panel -- the tiling you draw and
+the tiling you run are selected independently, on their own pages):
+  * Visualise  — pick a tiling + graph and generate it at a size you control, optionally overlaying the
+                 exact percolation graph, i.e. proof the generator produces the real shape + lattice.
   * Run        — plan either a p_c sweep OR a Cardy crossing test (patch, sizes, trials): preview the
                  graph size / usable sizes / run-time / accuracy, then emit the exact runner/runner.py
                  or runner/cardy_runner.py command. The run itself happens in a terminal (it
@@ -30,16 +31,14 @@ from engine.percolation import l_sweep
 
 st.set_page_config(page_title="Aperiodic Percolation Portal", layout="wide")
 # Tighten the vertical rhythm: Streamlit's defaults leave a lot of dead space up top -- the main
-# container has ~6rem padding, headings carry ~1.25rem of block padding each (the h1 title alone was
-# ~90px tall), and the sidebar's collapse-button header is ~60px. Those stack up and push the title,
-# the sidebar controls, and the tab content well down the page. Trim them so content sits near the
-# top. (Also shrink the metric value font so the longer bands like "a minute or two" don't clip.)
+# container has ~6rem padding and headings carry ~1.25rem of block padding each (the h1 title alone
+# was ~90px tall). Those stack up and push the title and tab content down the page. Trim them so
+# content sits near the top. (Also shrink the metric value font so longer values don't clip.)
 st.markdown(
     "<style>"
     "[data-testid='stMetricValue']{font-size:1.6rem;}"
     # Clear the fixed 60px top header bar so the title isn't cropped under it, but no more than that.
     ".block-container{padding-top:4rem;}"
-    "[data-testid='stSidebarHeader']{height:2.25rem;min-height:2.25rem;}"
     # Trim only the heading BOTTOM padding so gaps between headings and content tighten without
     # clipping the glyph tops.
     "h1{padding-top:0.4rem !important;padding-bottom:0.3rem !important;}"
@@ -233,77 +232,68 @@ def show_cardy(result, meta, key_prefix="cardy"):
                  f"RMS(R_h − Cardy) = {rms:.4f}  (noise floor {floor:.4f}) — {flag}")
 
 
-# ============================================================ sidebar: tiling + graph + seed (shared)
-with st.sidebar:
-    st.title("Controls")
-
-    st.caption("**Main tilings**")
-    tiling = st.selectbox("Tiling", gb.TILINGS, index=0,
-                          help="Aperiodic monotiles, the periodic family limits, the Tile(a,b) "
-                               "family slider, and the Penrose / triangular validations.")
+def pick_tiling(key_prefix, overlay=False):
+    """Per-page tiling + graph picker. There is no shared control panel any more -- the Visualise and
+    Run pages each own an INDEPENDENT selection (distinct `key_prefix`), so the tiling you're drawing
+    need not be the one you're preparing to run. Renders the tiling dropdown, the Tile(a,b) edge
+    sliders when the family is chosen, and the direct/dual graph radio (plus an overlay checkbox for
+    Visualise). Returns (tiling, a, b, member, graph_type, show_graph); member is None only for the
+    degenerate Tile(0,0)."""
+    tiling = st.selectbox("Tiling", gb.TILINGS, index=0, key=f"{key_prefix}_tiling",
+                          help="Aperiodic monotiles, the periodic family limits, the Tile(a,b) family, "
+                               "and the Penrose / triangular validations.")
     st.caption(f"*{gb.CATEGORY[tiling]}*")
-
     a, b = 1.0, gb.S3
     if tiling == gb.FAMILY:
-        # Real edge-length sliders (server-side): they morph the tile on the Visualise tab AND choose
-        # which concrete member the other tabs render/percolate. Default (1, √3) is the hat.
-        a = st.slider("Edge a — unit / blue", 0.0, 2.0, 1.0, 0.05, key="fam_a")
-        b = st.slider("Edge b — √3 / red", 0.0, 2.0, round(float(gb.S3), 2), 0.05, key="fam_b")
+        a = st.slider("Edge a — unit / blue", 0.0, 2.0, 1.0, 0.05, key=f"{key_prefix}_fam_a")
+        b = st.slider("Edge b — √3 / red", 0.0, 2.0, round(float(gb.S3), 2), 0.05, key=f"{key_prefix}_fam_b")
         member = gb.resolve_member(tiling, a, b)
-        cls = gb.family_member(a, b)[1]
         if member is None:
             st.caption("Tile(0,0) is degenerate — give a or b a non-zero length.")
         else:
-            st.caption(f"Tile(a,b) → **{member}**  ·  *{cls}*. Percolation depends only on adjacency, so "
-                       "every generic member (a≠b, both>0) runs identically to the hat; the endpoints are "
-                       "the comet (b→0) and chevron (a→0), and a=b is the spectre.")
+            st.caption(f"Tile(a,b) → **{member}**  ·  *{gb.family_member(a, b)[1]}*")
     else:
         member = tiling
-
-    graph_opts = gb.GRAPHS_FOR.get(member, gb.GRAPHS)
-    graph_type = st.radio("Graph", graph_opts, horizontal=True,
+    graph_opts = gb.GRAPHS_FOR.get(member, gb.GRAPHS) if member else gb.GRAPHS
+    gk = f"{key_prefix}_graph"
+    if st.session_state.get(gk) not in graph_opts:      # a one-graph member would strand a stale pick -> error
+        st.session_state.pop(gk, None)
+    graph_type = st.radio("Graph", graph_opts, horizontal=True, key=gk,
                           help="Direct = tile corners are sites, tile edges are bonds. "
                                "Dual = tiles are sites, adjacent tiles are bonded.")
     if len(graph_opts) == 1:
         st.caption(f"({member} admits only the {graph_opts[0].split()[0].lower()} graph.)")
-    # Right next to the Direct/Dual choice, because toggling the graph here + this overlay is exactly
-    # what shows the difference between the two graphs on the Visualise tab.
-    show_graph = st.checkbox("Overlay graph on the tiling",
-                             help="Shows what the direct and dual consider nodes and edges "
-                                  "for the given tiling.")
-
-    st.session_state.setdefault("perc_seed", 123456789)
-    seed = int(st.number_input("Seed", step=1, key="perc_seed"))
+    show_graph = False
+    if overlay:
+        show_graph = st.checkbox("Overlay graph on the tiling", key=f"{key_prefix}_overlay",
+                                 help="Shows what the direct and dual consider nodes and edges.")
+    return tiling, a, b, member, graph_type, show_graph
 
 
 st.title("Aperiodic Monotile Percolation Portal")
-runnable = member is not None
-if not runnable:
-    st.stop()
-
 tab_vis, tab_run, tab_analyse = st.tabs(
     ["Visualise", "Run", "Analyse saved"])
 
 # ============================================================ VISUALISE engine
 with tab_vis:
-    st.subheader(f"Generate — {member}")
+    tiling, a, b, member, graph_type, show_graph = pick_tiling("vis", overlay=True)
+    st.subheader(f"Generate — {member}" if member else "Generate")
     if tiling == gb.FAMILY:
-        # Tile(a,b) shape, drawn live from the sidebar a/b sliders (figs.visualise renders the single
+        # Tile(a,b) shape, drawn live from the a/b sliders above (figs.visualise renders the single
         # morphed tile for the FAMILY choice). Move the sliders to walk the whole family.
         st.markdown(
             r"The hat is one member of a continuous family, Tile$(a,b)$, set by its two edge lengths: "
             r"$a$ for the unit edges (blue) and $b$ for the $\sqrt{3}$ edges (red). The other aperiodic "
             r"monotiles live here too, the spectre is Tile$(1,1)$ and the turtle is Tile$(\sqrt{3},1)$; "
             r"shrink an edge-class to zero and you reach an endpoint, $b \to 0$ the comet and $a \to 0$ "
-            r"the chevron. The sidebar $a$/$b$ sliders morph the tile below and pick which concrete "
-            r"member the other tabs render and percolate.")
+            r"the chevron. The $a$/$b$ sliders above morph the tile below.")
         left, _right = st.columns([3, 1], gap="large")
         with left:
             try:
                 fig, _ntiles, _gcounts = cached_visualise(tiling, 1, round(a, 3), round(b, 3),
                                                           graph_type, False)
                 st.pyplot(fig, width="content")
-                st.caption(f"Tile(a,b) resolves to: **{member}**  ·  the other tabs run this member.")
+                st.caption(f"Tile(a,b) resolves to: **{member}**.")
                 st.download_button("Download image", _fig_bytes(fig), mime="image/png",
                                    file_name=f"{member}_tile.png", key="vis_dl")
             except Exception as e:
@@ -340,178 +330,185 @@ with tab_vis:
 # doesn't launch or monitor the worker -- the console owns running, this page owns getting the flags
 # right (and, via "Use paper settings", handing you the exact command that reproduces the paper).
 with tab_run:
-    kind = "dual" if graph_type.startswith("Dual") else "direct"
-    _gsh = "dual" if kind == "dual" else "direct"
-    st.subheader(f"Run — {member} · {kind} graph")
-
-    run_type = st.radio(
-        "Run type", ["Percolation threshold  p_c", "Crossing test  (Cardy)"],
-        horizontal=True, key="run_type",
-        help="p_c: finite-size sweep of the spanning threshold, extrapolated to L→∞.  "
-             "Cardy: the conformal-invariance crossing test — crossing probability vs rectangle "
-             "aspect ratio, against Cardy's exact 2D-percolation curve.")
-    is_cardy = run_type.startswith("Crossing")
-
-    def _fmt_count(n):
-        if n >= 1_000_000: return f"{n/1e6:.1f}M"
-        if n >= 1_000:     return f"{n/1e3:.0f}k"
-        return str(int(n))
-
-    # Patch is a FREE number input, not a capped slider: the GUI no longer runs the sweep in-browser
-    # (it emits a command), so there's no runaway build to guard against. This is what lets "Use paper
-    # settings" dial in the real production patch (e.g. 840 cells) -- the old slider max clamped it.
-    plabel, _plo, _phi, pdflt, phelp = gb.PATCH_CTL[member]
-    patch_key = f"run_patch_{member}"          # per-member so switching tilings keeps a sane value
-    st.session_state.setdefault(patch_key, int(pdflt))
-
-    cset, cnote = st.columns([1, 1], gap="large")
-    with cset:
-        if not is_cardy:
-            # One-click "the paper run": fills the exact production parameters, so the emitted command
-            # reproduces the paper. Now always fits (patch is uncapped).
-            preset = gb.paper_preset(member, kind)
-            if preset:
-                def _apply_preset(preset=preset, patch_key=patch_key):
-                    st.session_state[patch_key] = int(preset["patch"])
-                    st.session_state["run_lmin"] = float(preset["L_min"])
-                    st.session_state["run_lmax"] = float(preset["L_max"])
-                    st.session_state["run_gap"] = float(preset["gap"])
-                    st.session_state["run_trials"] = int(preset["T"])
-                    st.session_state["perc_seed"] = int(preset["seed"])
-                st.button(f"Use paper settings ({member})", on_click=_apply_preset,
-                          help="Load the exact production parameters this object was run with for the "
-                               "paper, then copy the command below.")
-
-        patch = int(st.number_input(plabel, min_value=int(_plo), step=1, key=patch_key, help=phelp))
-
-        # Size + usable window come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing
-        # even the production patch is instant.
-        meas = estimate.solid_window(member, kind, patch)
-        ge = estimate.geometry(member, kind, patch)
-        if is_cardy:
-            usable_max = meas if meas else ((ge[1] * 0.9) if ge else 200.0)
-            st.caption(f"Largest usable **window L** for this patch ≈ **{usable_max:.0f}** "
-                       "(bigger rectangles fall outside the tiling and are skipped).")
-        else:
-            usable_max = meas if meas else ((ge[1] * 0.95) if ge else 200.0)
-            how = ("the largest window measured to be fully tiled (0% off-tile) with a coordinated "
-                   "buffer" if meas else "0.95× the detected solid square (conservative fallback — this "
-                   "config isn't calibrated)")
-            st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
-                       f"(bigger windows fall outside the tiling and are skipped). This is {how}; "
-                       "`builders/verify_solid_windows.py` reproduces the check.")
-
-        st.markdown("**Parameters**")
-        if not is_cardy:
-            st.session_state.setdefault("run_lmin", 10.0)
-            st.session_state.setdefault("run_lmax", float(max(20, round(usable_max))))
-            st.session_state.setdefault("run_gap", 20.0)
-            st.session_state.setdefault("run_trials", 200)
-            ra, rb = st.columns(2)
-            L_min = ra.number_input("L min", min_value=2.0, step=1.0, key="run_lmin",
-                                    help="Smallest square-window side length in the L sweep.")
-            L_max = rb.number_input("L max", min_value=3.0, step=1.0, key="run_lmax",
-                                    help="Largest square-window side length in the L sweep.")
-            rc, rd = st.columns(2)
-            gap = rc.number_input("Gap  ΔL", min_value=1.0, step=1.0, key="run_gap",
-                                  help="Spacing between window sizes.")
-            T = rd.number_input("Trials per L", min_value=1, step=50, key="run_trials",
-                                help="Monte-Carlo trials per L. More trials means smaller error bars.")
-        else:
-            st.session_state.setdefault("cardy_windows",
-                                        f"{usable_max*0.4:.0f}, {usable_max*0.7:.0f}" if usable_max
-                                        else "150, 250")
-            windows_txt = st.text_input("Window sizes L (comma-separated)", key="cardy_windows",
-                                        help="Each window runs a square anchor plus the aspect-ratio "
-                                             "sweep at fixed area L². Several windows show the finite-"
-                                             "size deviation shrinking onto Cardy's curve.")
-            ca, cb = st.columns(2)
-            st.session_state.setdefault("cardy_naspect", 20)
-            st.session_state.setdefault("cardy_T", 8000)
-            n_aspects = ca.number_input("Aspect ratios", min_value=5, max_value=60, step=1,
-                                        key="cardy_naspect")
-            cT = cb.number_input("Trials / rectangle", min_value=200, step=500, key="cardy_T",
-                                 help="Crossing probability needs high T (noise floor ~ √(1/4T)). The "
-                                      "paper's strong tier used 24000.")
-            cc, cd = st.columns(2)
-            st.session_state.setdefault("cardy_amin", 0.5)
-            st.session_state.setdefault("cardy_amax", 2.0)
-            amin = cc.number_input("Aspect min", min_value=0.2, max_value=1.0, step=0.1, key="cardy_amin")
-            amax = cd.number_input("Aspect max", min_value=1.0, max_value=5.0, step=0.1, key="cardy_amax")
-
-    with cnote:
-        ref = gb.REFERENCE.get((member, kind))
-        if ref:
-            st.caption(f"Reference — {ref}")
-
-    # ---- plan + readout (geometry facts only; NO runtime estimate -- the runner prints a live ETA) ----
-    if not is_cardy:
-        Ls = l_sweep(L_min, L_max, gap)                    # SHARED engine definition -> identical sizes
-        plan = estimate.plan_run(member, kind, patch, Ls) if Ls else None
-        n_used = plan["n_usable"] if plan else 0
-        accuracy = estimate.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Graph nodes ~", _fmt_count(plan["nodes_est"]) if plan else "—",
-                  help=(f"~{plan['nodes_est']:,} nodes, from geometry (not yet built)." if plan
-                        else "Set a valid sweep."))
-        m2.metric("Usable L", f"{n_used} / {len(Ls)}")
-        m3.metric("Est. accuracy", accuracy,
-                  help="Rough band for the digits of p_c this L-range and trial count buy. Small "
-                       "patches are also finite-size biased (the value itself is off).")
-        if n_used < 3:
-            st.error("Fewer than 3 usable L values — raise the patch, lower L min, or shrink the gap.")
+    tiling, a, b, member, graph_type, _ = pick_tiling("run")
+    st.session_state.setdefault("run_seed", 123456789)
+    seed = int(st.number_input("Seed", step=1, key="run_seed",
+                               help="Monte-Carlo seed. The same seed reproduces the same run."))
+    if member is None:
+        st.info("Tile(0,0) is degenerate — give a or b a non-zero length to pick a runnable member.")
     else:
-        try:
-            windows = [float(x) for x in windows_txt.replace(";", ",").split(",") if x.strip()]
-        except ValueError:
-            windows = []
-        cplan = estimate.plan_cardy(member, kind, patch, windows, int(cT)) if windows else None
-        n_used = cplan["n_usable"] if cplan else 0
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Graph nodes ~", _fmt_count(cplan["nodes_est"]) if cplan else "—")
-        m2.metric("Usable windows", f"{n_used} / {len(windows)}")
-        m3.metric("RMS noise floor", f"{cplan['floor']:.4f}" if cplan else "—",
-                  help="√(1/4T): the statistical floor the RMS(measured − Cardy) can reach. Lower T "
-                       "means a noisier curve.")
-        if n_used < 1:
-            st.error("No usable windows — all are larger than this patch allows. Use smaller window "
-                     "sizes, or raise the patch.")
+        kind = "dual" if graph_type.startswith("Dual") else "direct"
+        _gsh = "dual" if kind == "dual" else "direct"
+        st.subheader(f"Run — {member} · {kind} graph")
 
-    st.caption("Runs scale with the **graph-node count × trials** above: the production settings (large "
-               "patches, high trial counts) can take **hours**, while a small exploratory patch is "
-               "seconds. Copy the command below into a terminal — it prints a live ETA from the first size.")
+        run_type = st.radio(
+            "Run type", ["Percolation threshold  p_c", "Crossing test  (Cardy)"],
+            horizontal=True, key="run_type",
+            help="p_c: finite-size sweep of the spanning threshold, extrapolated to L→∞.  "
+                 "Cardy: the conformal-invariance crossing test — crossing probability vs rectangle "
+                 "aspect ratio, against Cardy's exact 2D-percolation curve.")
+        is_cardy = run_type.startswith("Crossing")
 
-    # ---- emit the exact command ----
-    st.markdown("---")
-    if not is_cardy:
-        want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
-                               help="Largest-cluster pass: records the incipient-cluster size per trial "
-                                    "-> the fractal dimension d_f (⟨s_max⟩ ~ L^d_f), one of the two "
-                                    "exponents that fix the universality class. The paper's universality "
-                                    "runs turn it on.")
-        parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
-        if tiling == gb.FAMILY:
-            parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
-        parts += [f"--patch {patch}", f"--lmin {L_min:g}", f"--lmax {L_max:g}", f"--gap {gap:g}",
-                  f"--trials {int(T)}", f"--seed {int(seed)}"]
-        if want_exp:
-            parts.append("--exponents")
-        cmd = "python runner/runner.py " + " ".join(parts)
-    else:
-        parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
-        if tiling == gb.FAMILY:
-            parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
-        win_str = " ".join(f"{w:g}" for w in windows) if windows else "150 250"
-        parts += [f"--patch {patch}", f"--windows {win_str}", f"--n-aspects {int(n_aspects)}",
-                  f"--aspect-min {amin:g}", f"--aspect-max {amax:g}", f"--trials {int(cT)}",
-                  f"--seed {int(seed)}"]
-        cmd = "python runner/cardy_runner.py " + " ".join(parts)
+        def _fmt_count(n):
+            if n >= 1_000_000: return f"{n/1e6:.1f}M"
+            if n >= 1_000:     return f"{n/1e3:.0f}k"
+            return str(int(n))
 
-    st.markdown("**Run this in a terminal**, from the project folder:")
-    st.code(cmd, language="bash")
-    st.caption("Identical kernels and seed as the rest of the portal. It checkpoints and resumes if "
-               "interrupted, and saves to paper_results/npz/ — open the finished run under the "
-               "“Analyse saved” tab.")
+        # Patch is a FREE number input, not a capped slider: the GUI no longer runs the sweep in-browser
+        # (it emits a command), so there's no runaway build to guard against. This is what lets "Use paper
+        # settings" dial in the real production patch (e.g. 840 cells) -- the old slider max clamped it.
+        plabel, _plo, _phi, pdflt, phelp = gb.PATCH_CTL[member]
+        patch_key = f"run_patch_{member}"          # per-member so switching tilings keeps a sane value
+        st.session_state.setdefault(patch_key, int(pdflt))
+
+        cset, cnote = st.columns([1, 1], gap="large")
+        with cset:
+            if not is_cardy:
+                # One-click "the paper run": fills the exact production parameters, so the emitted command
+                # reproduces the paper. Now always fits (patch is uncapped).
+                preset = gb.paper_preset(member, kind)
+                if preset:
+                    def _apply_preset(preset=preset, patch_key=patch_key):
+                        st.session_state[patch_key] = int(preset["patch"])
+                        st.session_state["run_lmin"] = float(preset["L_min"])
+                        st.session_state["run_lmax"] = float(preset["L_max"])
+                        st.session_state["run_gap"] = float(preset["gap"])
+                        st.session_state["run_trials"] = int(preset["T"])
+                        st.session_state["run_seed"] = int(preset["seed"])
+                    st.button(f"Use paper settings ({member})", on_click=_apply_preset,
+                              help="Load the exact production parameters this object was run with for the "
+                                   "paper, then copy the command below.")
+
+            patch = int(st.number_input(plabel, min_value=int(_plo), step=1, key=patch_key, help=phelp))
+
+            # Size + usable window come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing
+            # even the production patch is instant.
+            meas = estimate.solid_window(member, kind, patch)
+            ge = estimate.geometry(member, kind, patch)
+            if is_cardy:
+                usable_max = meas if meas else ((ge[1] * 0.9) if ge else 200.0)
+                st.caption(f"Largest usable **window L** for this patch ≈ **{usable_max:.0f}** "
+                           "(bigger rectangles fall outside the tiling and are skipped).")
+            else:
+                usable_max = meas if meas else ((ge[1] * 0.95) if ge else 200.0)
+                how = ("the largest window measured to be fully tiled (0% off-tile) with a coordinated "
+                       "buffer" if meas else "0.95× the detected solid square (conservative fallback — this "
+                       "config isn't calibrated)")
+                st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
+                           f"(bigger windows fall outside the tiling and are skipped). This is {how}; "
+                           "`builders/verify_solid_windows.py` reproduces the check.")
+
+            st.markdown("**Parameters**")
+            if not is_cardy:
+                st.session_state.setdefault("run_lmin", 10.0)
+                st.session_state.setdefault("run_lmax", float(max(20, round(usable_max))))
+                st.session_state.setdefault("run_gap", 20.0)
+                st.session_state.setdefault("run_trials", 200)
+                ra, rb = st.columns(2)
+                L_min = ra.number_input("L min", min_value=2.0, step=1.0, key="run_lmin",
+                                        help="Smallest square-window side length in the L sweep.")
+                L_max = rb.number_input("L max", min_value=3.0, step=1.0, key="run_lmax",
+                                        help="Largest square-window side length in the L sweep.")
+                rc, rd = st.columns(2)
+                gap = rc.number_input("Gap  ΔL", min_value=1.0, step=1.0, key="run_gap",
+                                      help="Spacing between window sizes.")
+                T = rd.number_input("Trials per L", min_value=1, step=50, key="run_trials",
+                                    help="Monte-Carlo trials per L. More trials means smaller error bars.")
+            else:
+                st.session_state.setdefault("cardy_windows",
+                                            f"{usable_max*0.4:.0f}, {usable_max*0.7:.0f}" if usable_max
+                                            else "150, 250")
+                windows_txt = st.text_input("Window sizes L (comma-separated)", key="cardy_windows",
+                                            help="Each window runs a square anchor plus the aspect-ratio "
+                                                 "sweep at fixed area L². Several windows show the finite-"
+                                                 "size deviation shrinking onto Cardy's curve.")
+                ca, cb = st.columns(2)
+                st.session_state.setdefault("cardy_naspect", 20)
+                st.session_state.setdefault("cardy_T", 8000)
+                n_aspects = ca.number_input("Aspect ratios", min_value=5, max_value=60, step=1,
+                                            key="cardy_naspect")
+                cT = cb.number_input("Trials / rectangle", min_value=200, step=500, key="cardy_T",
+                                     help="Crossing probability needs high T (noise floor ~ √(1/4T)). The "
+                                          "paper's strong tier used 24000.")
+                cc, cd = st.columns(2)
+                st.session_state.setdefault("cardy_amin", 0.5)
+                st.session_state.setdefault("cardy_amax", 2.0)
+                amin = cc.number_input("Aspect min", min_value=0.2, max_value=1.0, step=0.1, key="cardy_amin")
+                amax = cd.number_input("Aspect max", min_value=1.0, max_value=5.0, step=0.1, key="cardy_amax")
+
+        with cnote:
+            ref = gb.REFERENCE.get((member, kind))
+            if ref:
+                st.caption(f"Reference — {ref}")
+
+        # ---- plan + readout (geometry facts only; NO runtime estimate -- the runner prints a live ETA) ----
+        if not is_cardy:
+            Ls = l_sweep(L_min, L_max, gap)                    # SHARED engine definition -> identical sizes
+            plan = estimate.plan_run(member, kind, patch, Ls) if Ls else None
+            n_used = plan["n_usable"] if plan else 0
+            accuracy = estimate.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Graph nodes ~", _fmt_count(plan["nodes_est"]) if plan else "—",
+                      help=(f"~{plan['nodes_est']:,} nodes, from geometry (not yet built)." if plan
+                            else "Set a valid sweep."))
+            m2.metric("Usable L", f"{n_used} / {len(Ls)}")
+            m3.metric("Est. accuracy", accuracy,
+                      help="Rough band for the digits of p_c this L-range and trial count buy. Small "
+                           "patches are also finite-size biased (the value itself is off).")
+            if n_used < 3:
+                st.error("Fewer than 3 usable L values — raise the patch, lower L min, or shrink the gap.")
+        else:
+            try:
+                windows = [float(x) for x in windows_txt.replace(";", ",").split(",") if x.strip()]
+            except ValueError:
+                windows = []
+            cplan = estimate.plan_cardy(member, kind, patch, windows, int(cT)) if windows else None
+            n_used = cplan["n_usable"] if cplan else 0
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Graph nodes ~", _fmt_count(cplan["nodes_est"]) if cplan else "—")
+            m2.metric("Usable windows", f"{n_used} / {len(windows)}")
+            m3.metric("RMS noise floor", f"{cplan['floor']:.4f}" if cplan else "—",
+                      help="√(1/4T): the statistical floor the RMS(measured − Cardy) can reach. Lower T "
+                           "means a noisier curve.")
+            if n_used < 1:
+                st.error("No usable windows — all are larger than this patch allows. Use smaller window "
+                         "sizes, or raise the patch.")
+
+        st.caption("Runs scale with the **graph-node count × trials** above: the production settings (large "
+                   "patches, high trial counts) can take **hours**, while a small exploratory patch is "
+                   "seconds. Copy the command below into a terminal — it prints a live ETA from the first size.")
+
+        # ---- emit the exact command ----
+        st.markdown("---")
+        if not is_cardy:
+            want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
+                                   help="Largest-cluster pass: records the incipient-cluster size per trial "
+                                        "-> the fractal dimension d_f (⟨s_max⟩ ~ L^d_f), one of the two "
+                                        "exponents that fix the universality class. The paper's universality "
+                                        "runs turn it on.")
+            parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
+            if tiling == gb.FAMILY:
+                parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
+            parts += [f"--patch {patch}", f"--lmin {L_min:g}", f"--lmax {L_max:g}", f"--gap {gap:g}",
+                      f"--trials {int(T)}", f"--seed {int(seed)}"]
+            if want_exp:
+                parts.append("--exponents")
+            cmd = "python runner/runner.py " + " ".join(parts)
+        else:
+            parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
+            if tiling == gb.FAMILY:
+                parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
+            win_str = " ".join(f"{w:g}" for w in windows) if windows else "150 250"
+            parts += [f"--patch {patch}", f"--windows {win_str}", f"--n-aspects {int(n_aspects)}",
+                      f"--aspect-min {amin:g}", f"--aspect-max {amax:g}", f"--trials {int(cT)}",
+                      f"--seed {int(seed)}"]
+            cmd = "python runner/cardy_runner.py " + " ".join(parts)
+
+        st.markdown("**Run this in a terminal**, from the project folder:")
+        st.code(cmd, language="bash")
+        st.caption("Identical kernels and seed as the rest of the portal. It checkpoints and resumes if "
+                   "interrupted, and saves to paper_results/npz/ — open the finished run under the "
+                   "“Analyse saved” tab.")
 
 
 
