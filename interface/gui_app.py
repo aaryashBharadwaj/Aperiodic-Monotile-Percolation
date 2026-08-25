@@ -232,13 +232,12 @@ def show_cardy(result, meta, key_prefix="cardy"):
                  f"RMS(R_h − Cardy) = {rms:.4f}  (noise floor {floor:.4f}) — {flag}")
 
 
-def pick_tiling(key_prefix, overlay=False):
-    """Per-page tiling + graph picker. There is no shared control panel any more -- the Visualise and
-    Run pages each own an INDEPENDENT selection (distinct `key_prefix`), so the tiling you're drawing
-    need not be the one you're preparing to run. Renders the tiling dropdown, the Tile(a,b) edge
-    sliders when the family is chosen, and the direct/dual graph radio (plus an overlay checkbox for
-    Visualise). Returns (tiling, a, b, member, graph_type, show_graph); member is None only for the
-    degenerate Tile(0,0)."""
+def pick_tiling(key_prefix):
+    """Per-page tiling picker. There is no shared control panel -- Visualise and Run each own an
+    INDEPENDENT selection (distinct `key_prefix`), so the tiling you draw need not be the one you run.
+    Renders the tiling dropdown and the Tile(a,b) edge sliders when the family is chosen. Returns
+    (tiling, a, b, member); member is None only for the degenerate Tile(0,0). The graph choice is
+    page-specific and added by the caller (an overlay selector on Visualise, a --graph flag on Run)."""
     tiling = st.selectbox("Tiling", gb.TILINGS, index=0, key=f"{key_prefix}_tiling",
                           help="Aperiodic monotiles, the periodic family limits, the Tile(a,b) family, "
                                "and the Penrose / triangular validations.")
@@ -254,20 +253,7 @@ def pick_tiling(key_prefix, overlay=False):
             st.caption(f"Tile(a,b) → **{member}**  ·  *{gb.family_member(a, b)[1]}*")
     else:
         member = tiling
-    graph_opts = gb.GRAPHS_FOR.get(member, gb.GRAPHS) if member else gb.GRAPHS
-    gk = f"{key_prefix}_graph"
-    if st.session_state.get(gk) not in graph_opts:      # a one-graph member would strand a stale pick -> error
-        st.session_state.pop(gk, None)
-    graph_type = st.radio("Graph", graph_opts, horizontal=True, key=gk,
-                          help="Direct = tile corners are sites, tile edges are bonds. "
-                               "Dual = tiles are sites, adjacent tiles are bonded.")
-    if len(graph_opts) == 1:
-        st.caption(f"({member} admits only the {graph_opts[0].split()[0].lower()} graph.)")
-    show_graph = False
-    if overlay:
-        show_graph = st.checkbox("Overlay graph on the tiling", key=f"{key_prefix}_overlay",
-                                 help="Shows what the direct and dual consider nodes and edges.")
-    return tiling, a, b, member, graph_type, show_graph
+    return tiling, a, b, member
 
 
 st.title("Aperiodic Monotile Percolation Portal")
@@ -276,7 +262,23 @@ tab_vis, tab_run, tab_analyse = st.tabs(
 
 # ============================================================ VISUALISE engine
 with tab_vis:
-    tiling, a, b, member, graph_type, show_graph = pick_tiling("vis", overlay=True)
+    tiling, a, b, member = pick_tiling("vis")
+    graph_opts = gb.GRAPHS_FOR.get(member, gb.GRAPHS) if member else gb.GRAPHS
+    # Graph is not a "mode" to visualise -- it's just what (if anything) to overlay on the tile picture.
+    if tiling == gb.FAMILY:
+        show_graph, graph_type = False, graph_opts[0]       # family draws a single morphing tile, no graph
+    else:
+        ok = "vis_overlay"
+        overlay_opts = ["None"] + list(graph_opts)
+        if st.session_state.get(ok) not in overlay_opts:    # a one-graph member would strand a stale pick
+            st.session_state.pop(ok, None)
+        overlay_sel = st.radio("Overlay graph", overlay_opts, horizontal=True, key=ok,
+                               format_func=lambda o: "None" if o == "None" else o.split()[0],
+                               help="Draw the exact percolation graph on the tiling: Direct = tile "
+                                    "corners (sites) + tile edges (bonds); Dual = tile centroids + "
+                                    "adjacency. Same generator the runner percolates.")
+        show_graph = overlay_sel != "None"
+        graph_type = overlay_sel if show_graph else graph_opts[0]
     st.subheader(f"Generate — {member}" if member else "Generate")
     if tiling == gb.FAMILY:
         # Tile(a,b) shape, drawn live from the a/b sliders above (figs.visualise renders the single
@@ -330,15 +332,22 @@ with tab_vis:
 # doesn't launch or monitor the worker -- the console owns running, this page owns getting the flags
 # right (and, via "Use paper settings", handing you the exact command that reproduces the paper).
 with tab_run:
-    tiling, a, b, member, graph_type, _ = pick_tiling("run")
-    st.session_state.setdefault("run_seed", 123456789)
-    seed = int(st.number_input("Seed", step=1, key="run_seed",
-                               help="Monte-Carlo seed. The same seed reproduces the same run."))
+    tiling, a, b, member = pick_tiling("run")
     if member is None:
         st.info("Tile(0,0) is degenerate — give a or b a non-zero length to pick a runnable member.")
     else:
+        # Graph is a run PARAMETER here (--graph): direct and dual are different graphs with different
+        # thresholds, so you must pick which to percolate. (On Visualise it's only an overlay choice.)
+        graph_opts = gb.GRAPHS_FOR.get(member, gb.GRAPHS)
+        gk = "run_graph"
+        if st.session_state.get(gk) not in graph_opts:       # a one-graph member would strand a stale pick
+            st.session_state.pop(gk, None)
+        graph_type = st.radio("Graph", graph_opts, horizontal=True, key=gk,
+                              format_func=lambda o: o.split()[0],
+                              help="Direct = tile corners are sites, tile edges are bonds. Dual = tiles "
+                                   "are sites, adjacent tiles are bonded.")
         kind = "dual" if graph_type.startswith("Dual") else "direct"
-        _gsh = "dual" if kind == "dual" else "direct"
+        _gsh = kind
         st.subheader(f"Run — {member} · {kind} graph")
 
         run_type = st.radio(
@@ -354,19 +363,19 @@ with tab_run:
             if n >= 1_000:     return f"{n/1e3:.0f}k"
             return str(int(n))
 
-        # Patch is a FREE number input, not a capped slider: the GUI no longer runs the sweep in-browser
-        # (it emits a command), so there's no runaway build to guard against. This is what lets "Use paper
-        # settings" dial in the real production patch (e.g. 840 cells) -- the old slider max clamped it.
+        # Every input below is a flag on the emitted command -- one "Parameters" block, in command order.
+        # Patch is a FREE number input (the GUI emits a command, no in-browser build), so "Use paper
+        # settings" can dial in the real production patch (e.g. 840 cells).
         plabel, _plo, _phi, pdflt, phelp = gb.PATCH_CTL[member]
         patch_key = f"run_patch_{member}"          # per-member so switching tilings keeps a sane value
         st.session_state.setdefault(patch_key, int(pdflt))
+        st.session_state.setdefault("run_seed", 123456789)
 
-        cset, cnote = st.columns([1, 1], gap="large")
+        st.markdown("**Parameters**  ·  *each becomes a flag on the command below*")
+        cset, cnote = st.columns([2, 1], gap="large")
         with cset:
             if not is_cardy:
-                # One-click "the paper run": fills the exact production parameters, so the emitted command
-                # reproduces the paper. Now always fits (patch is uncapped).
-                preset = gb.paper_preset(member, kind)
+                preset = gb.paper_preset(member, kind)      # one-click "the paper run" (always fits now)
                 if preset:
                     def _apply_preset(preset=preset, patch_key=patch_key):
                         st.session_state[patch_key] = int(preset["patch"])
@@ -376,13 +385,15 @@ with tab_run:
                         st.session_state["run_trials"] = int(preset["T"])
                         st.session_state["run_seed"] = int(preset["seed"])
                     st.button(f"Use paper settings ({member})", on_click=_apply_preset,
-                              help="Load the exact production parameters this object was run with for the "
+                              help="Fill the exact production parameters this object was run with for the "
                                    "paper, then copy the command below.")
 
-            patch = int(st.number_input(plabel, min_value=int(_plo), step=1, key=patch_key, help=phelp))
+            pcol, scol = st.columns(2)
+            patch = int(pcol.number_input(plabel, min_value=int(_plo), step=1, key=patch_key, help=phelp))
+            seed = int(scol.number_input("Seed", step=1, key="run_seed",
+                                         help="Monte-Carlo seed; the same seed reproduces the same run."))
 
-            # Size + usable window come from PRECOMPUTED GEOMETRY -- no graph is built here, so previewing
-            # even the production patch is instant.
+            # Usable window comes from PRECOMPUTED GEOMETRY -- no graph is built here.
             meas = estimate.solid_window(member, kind, patch)
             ge = estimate.geometry(member, kind, patch)
             if is_cardy:
@@ -392,13 +403,11 @@ with tab_run:
             else:
                 usable_max = meas if meas else ((ge[1] * 0.95) if ge else 200.0)
                 how = ("the largest window measured to be fully tiled (0% off-tile) with a coordinated "
-                       "buffer" if meas else "0.95× the detected solid square (conservative fallback — this "
-                       "config isn't calibrated)")
+                       "buffer" if meas else "0.95× the detected solid square (uncalibrated fallback)")
                 st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
-                           f"(bigger windows fall outside the tiling and are skipped). This is {how}; "
+                           f"(bigger windows are skipped). This is {how}; "
                            "`builders/verify_solid_windows.py` reproduces the check.")
 
-            st.markdown("**Parameters**")
             if not is_cardy:
                 st.session_state.setdefault("run_lmin", 10.0)
                 st.session_state.setdefault("run_lmax", float(max(20, round(usable_max))))
@@ -414,6 +423,12 @@ with tab_run:
                                       help="Spacing between window sizes.")
                 T = rd.number_input("Trials per L", min_value=1, step=50, key="run_trials",
                                     help="Monte-Carlo trials per L. More trials means smaller error bars.")
+                want_exp = st.checkbox("Also measure d_f  (--exponents; extra cluster pass, ~+20% time)",
+                                       value=False, key="run_exponents",
+                                       help="Largest-cluster pass: records the incipient-cluster size per "
+                                            "trial -> the fractal dimension d_f (⟨s_max⟩ ~ L^d_f), one of "
+                                            "the two exponents that fix the universality class. The paper's "
+                                            "universality runs turn it on.")
             else:
                 st.session_state.setdefault("cardy_windows",
                                             f"{usable_max*0.4:.0f}, {usable_max*0.7:.0f}" if usable_max
@@ -478,14 +493,9 @@ with tab_run:
                    "patches, high trial counts) can take **hours**, while a small exploratory patch is "
                    "seconds. Copy the command below into a terminal — it prints a live ETA from the first size.")
 
-        # ---- emit the exact command ----
+        # ---- emit the exact command (every parameter above maps to a flag here) ----
         st.markdown("---")
         if not is_cardy:
-            want_exp = st.checkbox("Also measure d_f (extra cluster pass, ~+20% time)", value=False,
-                                   help="Largest-cluster pass: records the incipient-cluster size per trial "
-                                        "-> the fractal dimension d_f (⟨s_max⟩ ~ L^d_f), one of the two "
-                                        "exponents that fix the universality class. The paper's universality "
-                                        "runs turn it on.")
             parts = [f'--tiling "{tiling}"', f"--graph {_gsh}"]
             if tiling == gb.FAMILY:
                 parts.append(f"--a {round(a, 3):g} --b {round(b, 3):g}")
