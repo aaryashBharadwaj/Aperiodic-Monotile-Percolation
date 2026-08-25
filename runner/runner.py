@@ -20,6 +20,17 @@ _GRAPH = {"direct": "Direct (vertex)", "vertex": "Direct (vertex)",
           "dual": "Dual (tile)", "tile": "Dual (tile)"}
 
 
+def _fmt_dur(s):
+    """Coarse human duration for the live ETA (seconds / minutes / hours)."""
+    s = max(0, int(s))
+    if s < 90:
+        return f"{s}s"
+    m = s / 60.0
+    if m < 90:
+        return f"{m:.0f}m"
+    return f"{m / 60.0:.1f}h"
+
+
 def main():
     ap = argparse.ArgumentParser(description="Run percolation on any tiling (GUI engine + console runner).")
     ap.add_argument("--tiling", required=True,
@@ -165,6 +176,13 @@ def main():
 
         last_i = start_i
         stopped = False
+        # Live self-calibrating ETA: the first completed size measures THIS machine's true per-node cost
+        # (run_one is ~flat per node), so the rest -- whose node counts scale as L^2 -- extrapolate with
+        # no pre-run cost model. The sweep is BACK-LOADED (the largest L dominates), so remaining work is
+        # weighted by predicted node-count, not by number of sizes (a naive count would badly under-read).
+        sweep_t0 = time.time()
+        work_done = 0.0        # sum of frame node counts over completed usable sizes (T is constant)
+        density_meas = None    # nodes per L^2, from the largest completed size (best proxy for the tail)
         for i in range(start_i, total):
             if os.path.exists(stop_flag):
                 stopped = True
@@ -185,6 +203,7 @@ def main():
                     rSM.append(step["s_max"]); rSMi.append(step.get("s_max_i"))
                     rBSM.append(step.get("bond_s_max")); rBSMi.append(step.get("bond_s_max_i"))
                 ms = sum(step["SI"]) / len(step["SI"]); mb = sum(step["BI"]) / len(step["BI"])
+                work_done += step["N"]; density_meas = step["N"] / (L * L)
                 line = f"size {i+1}/{total}  L={L:.0f}  N={step['N']:,}  site={ms:.3f}  bond={mb:.3f}"
             else:
                 skipped.append(float(L))
@@ -193,6 +212,16 @@ def main():
             save_ckpt(last_i)
             status("running" if last_i < total else "finalising", last_i, last_line=line)
             print("  " + line, flush=True)
+            # Re-extrapolate after each size: measured sec/node x predicted remaining node-work. Only
+            # sizes within the solid-window cap will actually run (the rest skip ~for free), so the
+            # remaining work counts just those. Prints nothing until the first usable size sets the rate.
+            remaining = [Ls[j] for j in range(i + 1, total)
+                         if _cap is None or Ls[j] <= _cap + 1e-9]
+            if density_meas and work_done > 0 and remaining:
+                rate = (time.time() - sweep_t0) / work_done          # seconds per node (at this T)
+                rem_work = density_meas * sum(Lj * Lj for Lj in remaining)
+                print(f"    ~{_fmt_dur(rate * rem_work)} to completion "
+                      f"({len(remaining)} of {total} sizes left)", flush=True)
 
         # Finalise: extrapolate (prints the p_c + direction-bias summary to stdout) + SAVE.
         print("\n" + "=" * 60 + f"\n{member} / {kind} extrapolation\n" + "=" * 60, flush=True)
