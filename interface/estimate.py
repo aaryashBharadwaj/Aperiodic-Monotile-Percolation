@@ -284,6 +284,38 @@ def plan_run(member, kind, patch, L_values, T, calib=None):
             "eta": eta, "build_eta": build_eta, "sweep_eta": sweep_eta, "launch_eta": LAUNCH_OVERHEAD_S}
 
 
+# run_crossing measures ONE spanning estimator per trial; run_one measures four (site/bond x span/
+# cluster), so a crossing costs ~1/4 the per-node-trial of the p_c sweep (matches the ~96ns vs ~390ns
+# measured in the run manifest). Coarse -- it's an ETA, not a promise.
+_CROSSING_COST_FRAC = 0.25
+
+
+def plan_cardy(member, kind, patch, windows, n_aspects, T, calib=None):
+    """Pre-run plan for a Cardy crossing sweep from geometry alone (NO graph build): node count, which
+    windows fit, the RMS noise floor, and a coarse ETA. Each window runs 1 square anchor + n_aspects
+    rectangles, all at area ~ L^2. Returns None if geometry is missing."""
+    g = load_geom().get(f"{member}|{kind}")
+    ge = geometry(member, kind, patch)
+    if not g or ge is None:
+        return None
+    nodes_est, side = ge
+    usable_max = solid_window(member, kind, patch) or 0.9 * side
+    usable = [L for L in windows if L <= usable_max]
+    calib = calib or load_calib()
+    density = _frame_density(g, patch)
+    per_window = lambda L: ((1 + n_aspects) * T * density * L * L
+                            * _c_per_node(calib, density * L * L) * _CROSSING_COST_FRAC)
+    sweep_eta = sum(per_window(L) for L in usable)
+    build_cpn = g.get("build_cpn", 0.0)
+    geom_ref = load_geom().get("Hat|direct", {}).get("build_cpn", 0.0)
+    mach = (calib.get("build_ref_cpn", geom_ref) / geom_ref) if geom_ref else 1.0
+    build_eta = build_cpn * nodes_est * mach
+    eta = LAUNCH_OVERHEAD_S + build_eta + sweep_eta
+    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max, "n_usable": len(usable),
+            "n_crossings": (1 + n_aspects) * len(usable), "eta": eta,
+            "floor": math.sqrt(0.25 / max(int(T), 1))}
+
+
 def accuracy_estimate(member, kind, patch, L_values, T):
     """A BROAD band for how many digits of p_c the config buys -- the accuracy analogue of the coarse
     ETA. The extrapolated-p_c scatter shrinks with the largest L (crossing width ~ L^-3/4) and with

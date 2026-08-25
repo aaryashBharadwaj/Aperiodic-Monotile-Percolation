@@ -353,35 +353,32 @@ def run_crossing(bundle, W, H, T, seed_base, bt=1.0, nworkers=0):
     return {"usable": True, "N": fd["node_count"], "W": float(W), "H": float(H), "pR": si.pR}
 
 
-def run_cardy(bundle, windows, n_aspects=20, aspect_min=0.5, aspect_max=2.0,
-              T=4000, seed=123456789, bt=1.0, nworkers=0):
-    """Cardy crossing-probability test on a pre-built bundle (same engine the CLI cardy_runner uses).
-    For each window size L: anchor at the p where the SQUARE crosses at 1/2 (p* = median onset), then
-    read the left-right crossing probability at each aspect ratio a = W/H (W=L*sqrt(a), H=L/sqrt(a),
-    area = L^2) at that same p*. Those are free predictions Cardy's exact curve must reproduce.
-    Returns the dict cardy_figure/analysis consume: {aspects, cardy, windows, Rh, pstar, trials,
-    noise_floor}. Windows too big for the patch are skipped."""
-    from engine.cardy import cardy_pi_h, crossing_probability
-    aspects = np.round(np.geomspace(aspect_min, aspect_max, int(n_aspects)), 4)
-    cardy = np.array([cardy_pi_h(a) for a in aspects])
-    floor = float(np.sqrt(0.25 / max(1, T)))
-    windows_done, Rh_rows, pstar_list, rms_list = [], [], [], []
-    for wi, L in enumerate(windows):
-        sq = run_crossing(bundle, L, L, T, seed + wi * 1000, bt, nworkers=nworkers)
-        if not sq.get("usable"):
-            continue
-        pstar = float(np.median(np.asarray(sq["pR"], float)))
-        Rh = np.full(len(aspects), np.nan)
-        for ai, asp in enumerate(aspects):
-            r = run_crossing(bundle, L * np.sqrt(asp), L / np.sqrt(asp), T,
-                             seed + wi * 1000 + ai + 1, bt, nworkers=nworkers)
-            if r.get("usable"):
-                Rh[ai] = crossing_probability(r["pR"], pstar)
-        windows_done.append(float(L)); Rh_rows.append(Rh); pstar_list.append(pstar)
-        rms_list.append(float(np.sqrt(np.nanmean((Rh - cardy) ** 2))))
-    return {"aspects": aspects, "cardy": cardy, "windows": np.array(windows_done, float),
-            "Rh": np.array(Rh_rows, float), "pstar": np.array(pstar_list, float),
-            "rms": np.array(rms_list, float), "trials": int(T), "noise_floor": floor}
+def load_cardy(fname, out_dir=None):
+    """Load a Cardy crossing npz (written by runner/cardy_runner.py) into the dict cardy_figure and the
+    Analyse tab consume. Returns (result, meta). Searches paper_results/npz/ unless out_dir is given.
+
+    The crossing sweep itself lives only in cardy_runner.py now -- the GUI plans it and emits that
+    command, then reads the result here (the runner and the old inline GUI loop wrapped the identical
+    run_crossing + engine.cardy kernels, so nothing about the numbers changed)."""
+    base = out_dir or RESULTS_DIR
+    path = fname if os.path.isabs(fname) else os.path.join(base, fname)
+
+    def _scalar(x, default=None):
+        try:
+            return x.item()
+        except Exception:
+            return default if x is None else x
+
+    with np.load(path, allow_pickle=True) as z:
+        d = {k: z[k] for k in z.files}
+    res = {"aspects": np.asarray(d["aspects"], float), "cardy": np.asarray(d["cardy"], float),
+           "windows": np.asarray(d["windows"], float), "Rh": np.asarray(d["Rh"], float),
+           "pstar": np.asarray(d["pstar"], float),
+           "trials": int(_scalar(d.get("trials"), 0) or 0),
+           "noise_floor": float(_scalar(d.get("noise_floor"), 0.0) or 0.0)}
+    meta = {"member": str(_scalar(d.get("member"), "")), "graph": str(_scalar(d.get("graph"), "")),
+            "patch": _scalar(d.get("patch"), ""), "seed": _scalar(d.get("seed"), "")}
+    return res, meta
 
 
 def _pick_lmin(valid, floor=50):
