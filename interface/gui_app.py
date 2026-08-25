@@ -215,7 +215,7 @@ def render_job_monitor(s):
                    "reopen later; it checkpoints after every L and resumes.")
         # Poll for progress, but do the sleep+rerun at the very END of the script (see bottom), NOT
         # here -- this monitor renders inside the Percolate tab, and rerunning here would fire before
-        # the later tabs (Analyse saved / Toy demo) get to draw, leaving them blank while a job runs.
+        # the later tabs (Crossing / Analyse saved) get to draw, leaving them blank while a job runs.
         st.session_state["_poll_monitor"] = True
     elif state in jobs.LIVE_STATES:
         # Status says live but the worker process is gone -> it was killed mid-run (crash / machine
@@ -283,10 +283,18 @@ with st.sidebar:
 
     a, b = 1.0, gb.S3
     if tiling == gb.FAMILY:
-        member = gb.resolve_member(tiling, a, b)          # (1, √3): the hat, the family's representative
-        st.caption("Morph the tile on the Visualise tab by dragging the two edge lengths. Percolation "
-                   "depends only on the adjacency, so every generic member runs identically to the hat; "
-                   "to percolate an endpoint, pick Comet or Chevron directly.")
+        # Real edge-length sliders (server-side): they morph the tile on the Visualise tab AND choose
+        # which concrete member the other tabs render/percolate. Default (1, √3) is the hat.
+        a = st.slider("Edge a — unit / blue", 0.0, 2.0, 1.0, 0.05, key="fam_a")
+        b = st.slider("Edge b — √3 / red", 0.0, 2.0, round(float(gb.S3), 2), 0.05, key="fam_b")
+        member = gb.resolve_member(tiling, a, b)
+        cls = gb.family_member(a, b)[1]
+        if member is None:
+            st.caption("Tile(0,0) is degenerate — give a or b a non-zero length.")
+        else:
+            st.caption(f"Tile(a,b) → **{member}**  ·  *{cls}*. Percolation depends only on adjacency, so "
+                       "every generic member (a≠b, both>0) runs identically to the hat; the endpoints are "
+                       "the comet (b→0) and chevron (a→0), and a=b is the spectre.")
     else:
         member = tiling
 
