@@ -676,7 +676,7 @@ with tab_analyse:
 # ============================================================ background-job poll (MUST be last)
 # The Percolate tab's job monitor asks to auto-refresh by setting _poll_monitor. We do the actual
 # sleep+rerun HERE, after every tab has rendered -- so a running job never pre-empts the later tabs
-# (Analyse saved / Toy demo) from drawing. (A GUI Run, or any console `runner.py` writing to the
+# (Crossing / Analyse saved) from drawing. (A GUI Run, or any console `runner.py` writing to the
 # shared jobs/ dir, triggers this via auto-reattach.)
 if st.session_state.pop("_poll_monitor", False):
     time.sleep(2)
