@@ -352,16 +352,6 @@ with tab_run:
              "aspect ratio, against Cardy's exact 2D-percolation curve.")
     is_cardy = run_type.startswith("Crossing")
 
-    def _scale_band(s):
-        # A machine-INDEPENDENT order-of-magnitude nudge (no per-machine timer). The runner prints the
-        # accurate live ETA once the sweep starts, so this is deliberately qualitative -- seconds vs
-        # overnight is the only distinction it's honest about.
-        if s < 30:      return "seconds"
-        if s < 600:     return "minutes"
-        if s < 3600:    return "up to ~an hour"
-        if s < 6 * 3600: return "a few hours"
-        return "hours (overnight)"
-
     def _fmt_count(n):
         if n >= 1_000_000: return f"{n/1e6:.1f}M"
         if n >= 1_000:     return f"{n/1e3:.0f}k"
@@ -454,55 +444,42 @@ with tab_run:
         if ref:
             st.caption(f"Reference — {ref}")
 
-    # ---- plan + readout ----
+    # ---- plan + readout (geometry facts only; NO runtime estimate -- the runner prints a live ETA) ----
     if not is_cardy:
         Ls = l_sweep(L_min, L_max, gap)                    # SHARED engine definition -> identical sizes
-        plan = estimate.plan_run(member, kind, patch, Ls, T) if Ls else None
+        plan = estimate.plan_run(member, kind, patch, Ls) if Ls else None
         n_used = plan["n_usable"] if plan else 0
-        scale_s = plan["scale_s"] if plan else 0.0
         accuracy = estimate.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3 = st.columns(3)
         m1.metric("Graph nodes ~", _fmt_count(plan["nodes_est"]) if plan else "—",
                   help=(f"~{plan['nodes_est']:,} nodes, from geometry (not yet built)." if plan
                         else "Set a valid sweep."))
         m2.metric("Usable L", f"{n_used} / {len(Ls)}")
-        m3.metric("Run scale", _scale_band(scale_s) if plan else "—",
-                  help="Rough, machine-independent order of magnitude (nodes × trials at a fixed "
-                       "reference ~390 ns/node·trial). The runner prints an ACCURATE live ETA from the "
-                       "first size once the sweep starts.")
-        m4.metric("Est. accuracy", accuracy,
+        m3.metric("Est. accuracy", accuracy,
                   help="Rough band for the digits of p_c this L-range and trial count buy. Small "
                        "patches are also finite-size biased (the value itself is off).")
         if n_used < 3:
             st.error("Fewer than 3 usable L values — raise the patch, lower L min, or shrink the gap.")
-        elif scale_s > 6 * 3600:
-            st.info("Overnight-scale run — copy the command into a terminal; its live ETA will confirm "
-                    "the real time once it starts.")
     else:
         try:
             windows = [float(x) for x in windows_txt.replace(";", ",").split(",") if x.strip()]
         except ValueError:
             windows = []
-        cplan = estimate.plan_cardy(member, kind, patch, windows, int(n_aspects), int(cT)) if windows \
-            else None
+        cplan = estimate.plan_cardy(member, kind, patch, windows, int(cT)) if windows else None
         n_used = cplan["n_usable"] if cplan else 0
-        scale_s = cplan["scale_s"] if cplan else 0.0
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3 = st.columns(3)
         m1.metric("Graph nodes ~", _fmt_count(cplan["nodes_est"]) if cplan else "—")
         m2.metric("Usable windows", f"{n_used} / {len(windows)}")
-        m3.metric("Run scale", _scale_band(scale_s) if cplan else "—",
-                  help="Rough, machine-independent order of magnitude (each window = 1 square + N aspect "
-                       "rectangles; a crossing costs ~¼ a p_c per-node·trial). The strong tier is hours "
-                       "— that's why it belongs in a terminal, not the browser.")
-        m4.metric("RMS noise floor", f"{cplan['floor']:.4f}" if cplan else "—",
+        m3.metric("RMS noise floor", f"{cplan['floor']:.4f}" if cplan else "—",
                   help="√(1/4T): the statistical floor the RMS(measured − Cardy) can reach. Lower T "
                        "means a noisier curve.")
         if n_used < 1:
             st.error("No usable windows — all are larger than this patch allows. Use smaller window "
                      "sizes, or raise the patch.")
-        elif scale_s > 6 * 3600:
-            st.info("Overnight-scale run — copy the command into a terminal (the strong Cardy tier is "
-                    "genuinely hours).")
+
+    st.caption("Runs scale with the **graph-node count × trials** above: the production settings (large "
+               "patches, high trial counts) can take **hours**, while a small exploratory patch is "
+               "seconds. Copy the command below into a terminal — it prints a live ETA from the first size.")
 
     # ---- emit the exact command ----
     st.markdown("---")

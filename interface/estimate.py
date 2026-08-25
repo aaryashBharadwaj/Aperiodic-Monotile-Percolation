@@ -8,7 +8,7 @@
 There is deliberately no per-machine timing calibration: the pre-run number is only a rough nudge
 (seconds vs overnight), and the runner (runner/runner.py) prints an ACCURATE live ETA from the first
 completed size once a sweep actually starts. Shared kernels/constants (build_graph, _frame_data,
-default_bt, TRI, LAUNCH_OVERHEAD_S) come from interface.gui_backend; the dependency is one-way.
+default_bt, TRI) come from interface.gui_backend; the dependency is one-way.
 """
 import os
 import math
@@ -16,18 +16,11 @@ import json
 import time
 
 from interface.gui_backend import (build_graph, _frame_data, default_bt, TRI, TILE11,
-                                    COMET_AP, CHEVRON_AP, LAUNCH_OVERHEAD_S)
+                                    COMET_AP, CHEVRON_AP)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))                 # this interface/ folder (the GUI's config lives beside it)
 GEOM_PATH = os.path.join(_HERE, "gui_geometry.json")               # machine-independent: precomputed tiling geometry
 SOLID_PATH = os.path.join(_HERE, "solid_windows.json")             # measured max fully-tiled window per (member,kind,patch)
-
-# Fixed per-node-trial cost for the COARSE pre-run "run scale" the UI shows. This is deliberately NOT
-# a per-machine calibration: the pre-run number is only an order-of-magnitude nudge (seconds vs
-# overnight), and the runner prints an ACCURATE live ETA from the first size once a sweep actually
-# starts. ~390 ns per node-trial for run_one's four estimators on the reference machine (run manifest
-# 2026-08-19, where the cost was measured FLAT in N -- no cache growth); a crossing is ~1/4 of that.
-_C_NODE_S = 390e-9
 
 
 # ----------------------------------------------------------------------------- geometry (no-build size)
@@ -185,64 +178,31 @@ def geometry(member, kind, patch):
     return int(g["density"] * side * side), float(side)
 
 
-def _frame_density(g, patch):
-    """The true in-frame node density (nodes per area) for the ETA (see calibrate_geometry)."""
-    if g["model"] in ("inflate", "linear"):
-        return g.get("frame_density", 0.0)
-    t = g["table"]                                  # penrose: per-subdivision
-    key = str(int(round(patch)))
-    if key in t:
-        return t[key][2]
-    ks = sorted(int(x) for x in t)
-    return t[str(min(ks, key=lambda z: abs(z - patch)))][2]
-
-
-def plan_run(member, kind, patch, L_values, T):
-    """Pre-run plan from geometry alone (NO graph build): estimated node count, usable-L range, and a
-    COARSE machine-independent run-scale in seconds (nodes x trials x a fixed reference per-node cost;
-    the runner prints the accurate live ETA once the sweep starts). Returns None if geometry missing."""
-    g = load_geom().get(f"{member}|{kind}")
+def plan_run(member, kind, patch, L_values):
+    """Pre-run plan from geometry alone (NO graph build): estimated node count and which L in the sweep
+    fit inside the solid window. No runtime estimate -- the node count is the honest magnitude cue, and
+    the runner prints a live ETA from the first size once the sweep starts. None if geometry missing."""
     ge = geometry(member, kind, patch)
-    if not g or ge is None:
+    if ge is None:
         return None
     nodes_est, side = ge
     usable_max = solid_window(member, kind, patch) or 0.95 * side   # measured cap; 0.95*side fallback
     usable = [L for L in L_values if L <= usable_max]
-    density = _frame_density(g, patch)
-    # N(L) = density*L^2; the sweep pays ~_C_NODE_S per node-trial (flat in N -- run manifest). Plus the
-    # one-time graph build (linear in patch nodes, reference-machine per-node cost) and worker startup.
-    sweep_s = _C_NODE_S * T * sum(density * L * L for L in usable)
-    build_s = g.get("build_cpn", 0.0) * nodes_est
-    scale_s = LAUNCH_OVERHEAD_S + build_s + sweep_s
-    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max,
-            "n_usable": len(usable), "scale_s": scale_s}
+    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max, "n_usable": len(usable)}
 
 
-# run_crossing measures ONE spanning estimator per trial; run_one measures four (site/bond x span/
-# cluster), so a crossing costs ~1/4 the per-node-trial of the p_c sweep (matches the ~96ns vs ~390ns
-# measured in the run manifest). Coarse -- an order-of-magnitude nudge, not a promise.
-_CROSSING_COST_FRAC = 0.25
-
-
-def plan_cardy(member, kind, patch, windows, n_aspects, T):
+def plan_cardy(member, kind, patch, windows, T):
     """Pre-run plan for a Cardy crossing sweep from geometry alone (NO graph build): node count, which
-    windows fit, the RMS noise floor, and a COARSE machine-independent run-scale. Each window runs 1
-    square anchor + n_aspects rectangles, all at area ~ L^2. Returns None if geometry is missing."""
-    g = load_geom().get(f"{member}|{kind}")
+    windows fit, and the RMS noise floor sqrt(1/4T). No runtime estimate -- the runner prints a live
+    ETA once the sweep starts. Returns None if geometry is missing."""
     ge = geometry(member, kind, patch)
-    if not g or ge is None:
+    if ge is None:
         return None
     nodes_est, side = ge
     usable_max = solid_window(member, kind, patch) or 0.9 * side
     usable = [L for L in windows if L <= usable_max]
-    density = _frame_density(g, patch)
-    per_window = lambda L: ((1 + n_aspects) * T * density * L * L * _C_NODE_S * _CROSSING_COST_FRAC)
-    sweep_s = sum(per_window(L) for L in usable)
-    build_s = g.get("build_cpn", 0.0) * nodes_est
-    scale_s = LAUNCH_OVERHEAD_S + build_s + sweep_s
-    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max, "n_usable": len(usable),
-            "n_crossings": (1 + n_aspects) * len(usable), "scale_s": scale_s,
-            "floor": math.sqrt(0.25 / max(int(T), 1))}
+    return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max,
+            "n_usable": len(usable), "floor": math.sqrt(0.25 / max(int(T), 1))}
 
 
 def accuracy_estimate(member, kind, patch, L_values, T):

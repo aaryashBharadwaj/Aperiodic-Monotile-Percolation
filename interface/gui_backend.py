@@ -541,12 +541,6 @@ def load_saved(fname, out_dir=None):
                  "timestamp": r.timestamp}
 
 
-# ----------------------------------------------------------------------------- time estimate
-# Flat per-run cost of spawning a fresh worker process: import the stack (numba/scipy/matplotlib)
-# + numba JIT warm-up. Measured ~3s import + fast (cached) JIT; padded for machine/cold-cache slop.
-LAUNCH_OVERHEAD_S = 6.0                                          # imported by interface.estimate (plan_run)
-
-
 # ----------------------------------------------------------------------------- geometry (no-build size)
 # The tiling's in-frame node DENSITY and the patch's inscribed-square SIDE are machine-INDEPENDENT, and
 # density is scale-invariant for the inflation tilings (inflating the hat tiles a bigger area at the
