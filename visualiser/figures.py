@@ -17,7 +17,7 @@ from matplotlib.collections import LineCollection
 
 from builders.direct_graph_builder import graph_from_polygons
 from builders.dual_graph_builder import build_dual_from_polygons
-from visualiser.run_tiling_render import tiling_polygons, render_tiling, _threshold_class
+from visualiser.run_tiling_render import tiling_polygons, render_tiling
 from generators.chevron_and_comet import tile_ab
 from generators.periodic_tiling_generator import square_tiles, triangular_tris
 from interface.gui_backend import (resolve_member, family_member, _penrose_tiling, _penrose_polys,
@@ -81,6 +81,34 @@ def _overlay_graph(fig, tiling, polys, graph_type, penrose_obj):
     return len(nodes), len(segs)
 
 
+# Edge-class colours for the Tile(a,b) family view: a = the unit edges (blue), b = the sqrt(3) edges
+# (red), o = any other edge (grey). Same legend the sidebar sliders use, so colouring the outline by
+# class shows at a glance which edges each slider stretches.
+_FAMILY_EDGE_COL = {"a": "#2e6f95", "b": "#d1495b", "o": "#b0b0b0"}
+
+
+def _family_tile_edge_classes():
+    """Class ('a'/'b'/'o') of each edge of the Tile(a,b) polygon, in vertex order. Recomputed by the
+    SAME test tile_ab uses (an edge is 'a' if the hat outline's edge is unit length, 'b' if sqrt(3)),
+    so edge i of tile_ab(a,b) -- poly[i] -> poly[(i+1) % n] -- carries class classes[i]. Independent of
+    a,b (the classification is on the base hat), so it's computed once and reused for every morph."""
+    import math
+    import generators.hat_generator as hg
+    pts = [(p["x"], p["y"]) for p in hg.hat_outline]
+    n = len(pts)
+    classes = []
+    for i in range(n):
+        x0, y0 = pts[i]; x1, y1 = pts[(i + 1) % n]
+        L = math.hypot(x1 - x0, y1 - y0)
+        if abs(L - round(L)) < 1e-6:
+            classes.append("a")
+        elif abs(L / S3 - round(L / S3)) < 1e-6:
+            classes.append("b")
+        else:
+            classes.append("o")
+    return classes
+
+
 def visualise(tiling, size, a=1.0, b=S3, graph_type="Direct (vertex)", show_graph=False):
     """Render the chosen tiling at the chosen size. Returns (fig, n_tiles, graph_counts or None).
     This is the generator showcase -- proof the substitution/lattice code produces the real shape.
@@ -92,9 +120,18 @@ def visualise(tiling, size, a=1.0, b=S3, graph_type="Direct (vertex)", show_grap
             fig, ax = plt.subplots(figsize=(5, 5)); ax.axis("off")
             ax.text(0.5, 0.5, "Tile(0,0)\ndegenerate", ha="center", va="center", fontsize=14)
             return fig, 0, None
-        col = _threshold_class(a, b)[1]
+        # Neutral fill + edges coloured by class (blue unit / red sqrt(3)) -- the same look as the old
+        # slider explainer, so you can see which edges a and b each control as you morph the tile.
+        poly = np.asarray(tile_ab(a, b))
+        classes = _family_tile_edge_classes()
+        n = len(poly)
         fig, ax = plt.subplots(figsize=(5, 5))
-        render_tiling([np.asarray(tile_ab(a, b))], ax=ax, facecolor=col, lw=1.6)
+        ax.fill(poly[:, 0], poly[:, 1], facecolor="#f2f2f4", edgecolor="none", zorder=1)
+        segs = [[poly[i], poly[(i + 1) % n]] for i in range(n)]
+        cols = [_FAMILY_EDGE_COL[c] for c in classes]
+        ax.add_collection(LineCollection(segs, colors=cols, linewidths=3.0,
+                                         capstyle="round", joinstyle="round", zorder=2))
+        ax.autoscale_view(); ax.set_aspect("equal"); ax.axis("off")
         return fig, 1, None
 
     # Every tiling (incl. Triangular): draw the TILE image, then let the optional overlay show what
