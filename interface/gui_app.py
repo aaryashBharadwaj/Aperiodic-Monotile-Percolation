@@ -461,11 +461,20 @@ with tab_run:
             Ls = l_sweep(L_min, L_max, gap)                    # SHARED engine definition -> identical sizes
             plan = estimate.plan_run(member, kind, patch, Ls) if Ls else None
             n_used = plan["n_usable"] if plan else 0
+            # Capacity = the MOST sizes this patch can use at the current L_min/gap: the steps that fit up
+            # to the useful ceiling (independent of L_max). Show requested-vs-capacity so the denominator
+            # is a stable target -- below it you have room to raise L max, above it the surplus sizes fall
+            # outside the tiling and are skipped. (n_used = min(requested, capacity) drives the guard.)
+            capacity = len(l_sweep(L_min, plan["usable_max"], gap)) if plan else 0
             m1, m2 = st.columns(2)
             m1.metric("Graph nodes ~", _fmt_count(plan["nodes_est"]) if plan else "—",
                       help=(f"~{plan['nodes_est']:,} nodes, from geometry (not yet built)." if plan
                             else "Set a valid sweep."))
-            m2.metric("Usable L", f"{n_used} / {len(Ls)}")
+            m2.metric("L sizes", f"{len(Ls)} / {capacity}" if capacity else "—",
+                      help="Window sizes you're requesting  /  the most this patch can use (steps up to "
+                           "the useful ceiling above). Under the denominator → raise L max for more "
+                           "fit-points; over it → the surplus sizes are skipped. Grow the denominator by "
+                           "raising the patch (higher ceiling) or shrinking the gap (more steps under it).")
             if n_used < 3:
                 st.error("Fewer than 3 usable L values — raise the patch, lower L min, or shrink the gap.")
         else:
