@@ -461,15 +461,11 @@ with tab_run:
             Ls = l_sweep(L_min, L_max, gap)                    # SHARED engine definition -> identical sizes
             plan = estimate.plan_run(member, kind, patch, Ls) if Ls else None
             n_used = plan["n_usable"] if plan else 0
-            accuracy = estimate.accuracy_estimate(member, kind, patch, Ls, T) if Ls else "—"
-            m1, m2, m3 = st.columns(3)
+            m1, m2 = st.columns(2)
             m1.metric("Graph nodes ~", _fmt_count(plan["nodes_est"]) if plan else "—",
                       help=(f"~{plan['nodes_est']:,} nodes, from geometry (not yet built)." if plan
                             else "Set a valid sweep."))
             m2.metric("Usable L", f"{n_used} / {len(Ls)}")
-            m3.metric("Est. accuracy", accuracy,
-                      help="Rough band for the digits of p_c this L-range and trial count buy. Small "
-                           "patches are also finite-size biased (the value itself is off).")
             if n_used < 3:
                 st.error("Fewer than 3 usable L values — raise the patch, lower L min, or shrink the gap.")
         else:

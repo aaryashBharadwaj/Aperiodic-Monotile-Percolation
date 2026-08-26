@@ -1,8 +1,7 @@
 """Pre-run estimation for the percolation GUI, from geometry alone -- no per-machine timer.
 
-    plan_run / plan_cardy   -> node count + usable sizes + a COARSE order-of-magnitude run-scale
+    plan_run / plan_cardy   -> node count + usable sizes (Cardy also: the √(1/4T) RMS noise floor)
     geometry(member,...)    -> (nodes, side) WITHOUT building the patch
-    accuracy_estimate(...)  -> a broad digits-of-p_c band
     calibrate_geometry / calibrate_solid_windows -> (re)fit the two machine-INDEPENDENT on-disk models
 
 There is deliberately no per-machine timing calibration: the pre-run number is only a rough nudge
@@ -203,27 +202,3 @@ def plan_cardy(member, kind, patch, windows, T):
     usable = [L for L in windows if L <= usable_max]
     return {"nodes_est": nodes_est, "side": side, "usable_max": usable_max,
             "n_usable": len(usable), "floor": math.sqrt(0.25 / max(int(T), 1))}
-
-
-def accuracy_estimate(member, kind, patch, L_values, T):
-    """A BROAD band for how many digits of p_c the config buys -- the accuracy analogue of the coarse
-    ETA. The extrapolated-p_c scatter shrinks with the largest L (crossing width ~ L^-3/4) and with
-    trials (~1/sqrt(T)); the constant is tuned so the paper hat run reads ~3 digits and a quick r=4
-    look reads ~1-2. NOT a rigorous CI, and small patches are additionally finite-size BIASED (the
-    central value is off), which is why tiny-L configs are flagged 'rough' regardless of scatter."""
-    ge = geometry(member, kind, patch)
-    if not ge:
-        return "—"
-    side = ge[1]
-    usable = [L for L in L_values if L <= (solid_window(member, kind, patch) or 0.95 * side)]
-    if len(usable) < 3:
-        return "—"
-    Lmax = max(usable)
-    err = 2.5 * (Lmax ** -0.75) / math.sqrt(max(T, 1))
-    if Lmax < 150:
-        return "rough (~1 digit)"
-    if err < 7e-4:
-        return "~3 digits"
-    if err < 3e-3:
-        return "~2 digits"
-    return "~1–2 digits"
