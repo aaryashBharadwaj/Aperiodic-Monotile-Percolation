@@ -6,16 +6,15 @@
 
 There is deliberately no per-machine timing calibration: the pre-run number is only a rough nudge
 (seconds vs overnight), and the runner (runner/runner.py) prints an ACCURATE live ETA from the first
-completed size once a sweep actually starts. Shared kernels/constants (build_graph, _frame_data,
-default_bt, TRI) come from interface.gui_backend; the dependency is one-way.
+completed size once a sweep actually starts. Shared kernels/constants (build_graph, TRI, ...) come
+from interface.gui_backend; the dependency is one-way.
 """
 import os
 import math
 import json
 import time
 
-from interface.gui_backend import (build_graph, _frame_data, default_bt, TRI, TILE11,
-                                    COMET_AP, CHEVRON_AP)
+from interface.gui_backend import build_graph, TRI, TILE11, COMET_AP, CHEVRON_AP
 
 _HERE = os.path.dirname(os.path.abspath(__file__))                 # this interface/ folder (the GUI's config lives beside it)
 GEOM_PATH = os.path.join(_HERE, "gui_geometry.json")               # machine-independent: precomputed tiling geometry
@@ -29,25 +28,17 @@ SOLID_PATH = os.path.join(_HERE, "solid_windows.json")             # measured ma
 # once, extrapolate the rest. The UI shows the node count + usable window for r=6 instantly; the heavy
 # graph is built only when the run actually happens (in a terminal).
 def _measure_geom(member, kind, patch):
-    """Build a patch and return (total_nodes, inscribed side, TRUE in-frame node density).
-    The frame density -- node_count in an interior L×L window / L^2 -- is what the ETA needs; the
-    whole-patch nodes/side^2 overcounts badly because the patch sprawls past its inscribed square.
-    (A nodes+edges "work" proxy was tried to capture degree, but it over-corrected the dual and hurt
-    the hat -- the main case -- so a plain node count, which nails the hat, is what we use.)"""
+    """Build a patch and return (total_nodes, inscribed side). Machine-independent geometry only --
+    the pre-run readout needs the node count and the inscribed-square side; nothing times the build."""
     gt = "Dual (tile)" if kind == "dual" else "Direct (vertex)"
-    t_b = time.perf_counter()
     b = build_graph(member, gt, patch)
-    build_cpn = (time.perf_counter() - t_b) / max(b["nodes"], 1)   # build seconds per patch node
-    L = max(10.0, 0.5 * b["side"])                       # a comfortably interior window
-    fd = _frame_data(b, L, default_bt(member))
-    nc = fd.get("node_count", 0)
-    return int(b["nodes"]), float(b["side"]), (nc / (L * L) if nc else 0.0), build_cpn
+    return int(b["nodes"]), float(b["side"])
 
 
 def calibrate_geometry(save=True):
     """Populate gui_geometry.json by building only CHEAP patches; inflation tilings extrapolate up.
-    Machine-independent (pure geometry) -- run once and ship it. Stores whole-patch density (for the
-    node-count readout) and the true in-frame node density (for the ETA)."""
+    Machine-independent (pure geometry) -- run once and ship it. Stores the whole-patch node density
+    and the inscribed side, from which geometry() predicts any patch's node count without building it."""
     G = {}
     # Hat / spectre / aperiodic comet+chevron: inflation model. Build r=2..5; densities constant, side
     # grows by lambda. lambda is fit from the TWO LARGEST built patches (r=4->5), NOT small ones -- the
@@ -55,33 +46,28 @@ def calibrate_geometry(save=True):
     # the production r=6 compounds the error badly (e.g. spectre was -57%). One step from r=5 is accurate.
     for member in ("Hat", "Spectre", COMET_AP, CHEVRON_AP):
         for kind in ("direct", "dual"):
-            tbl = {}; frame_dens = 0.0; build_cpn = 0.0
+            tbl = {}
             for r in (2, 3, 4, 5):
-                n, s, fd, bcpn = _measure_geom(member, kind, r)
+                n, s = _measure_geom(member, kind, r)
                 tbl[str(r)] = [int(n), float(s)]
-                if r == 5:
-                    frame_dens = fd; build_cpn = bcpn
             s4, (n5, s5) = tbl["4"][1], (tbl["5"][0], tbl["5"][1])
             G[f"{member}|{kind}"] = {"model": "inflate", "table": tbl, "r_built": 5,
-                                     "lambda": s5 / s4, "density": n5 / (s5 * s5),
-                                     "frame_density": frame_dens, "build_cpn": build_cpn}
-    # Penrose: fixed extent, density grows with subdivisions -> table each (all cheap), incl frame dens.
-    tbl = {}; build_cpn = 0.0
+                                     "lambda": s5 / s4, "density": n5 / (s5 * s5)}
+    # Penrose: fixed extent, density grows with subdivisions -> table each (all cheap).
+    tbl = {}
     for s in range(4, 10):
-        n, side, fd, bcpn = _measure_geom("Penrose", "direct", s)
-        tbl[str(s)] = [int(n), float(side), float(fd)]
-        build_cpn = bcpn                                 # largest subdivision (loop ends at 9) is most representative
-    G["Penrose|direct"] = {"model": "table", "table": tbl, "build_cpn": build_cpn}
+        n, side = _measure_geom("Penrose", "direct", s)
+        tbl[str(s)] = [int(n), float(side)]
+    G["Penrose|direct"] = {"model": "table", "table": tbl}
     # Periodic / triangular: block grows linearly with the cell count; densities constant.
     for member, kind in [("Comet", "direct"), ("Comet", "dual"), ("Chevron", "direct"),
                          ("Chevron", "dual"), (TRI, "direct"), (TRI, "dual"),
                          ("Square", "direct"), ("Square", "dual"),
                          (TILE11, "direct"), (TILE11, "dual")]:
-        n1, s1, f1, _b1 = _measure_geom(member, kind, 40)
-        n2, s2, f2, b2 = _measure_geom(member, kind, 70)
+        n1, s1 = _measure_geom(member, kind, 40)
+        n2, s2 = _measure_geom(member, kind, 70)
         G[f"{member}|{kind}"] = {"model": "linear", "k": 0.5 * (s1 / 40 + s2 / 70),
-                                 "density": 0.5 * (n1 / (s1 * s1) + n2 / (s2 * s2)),
-                                 "frame_density": 0.5 * (f1 + f2), "build_cpn": b2}
+                                 "density": 0.5 * (n1 / (s1 * s1) + n2 / (s2 * s2))}
     if save:
         os.makedirs(os.path.dirname(GEOM_PATH), exist_ok=True)
         with open(GEOM_PATH, "w") as f:

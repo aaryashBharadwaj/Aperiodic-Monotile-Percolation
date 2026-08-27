@@ -49,14 +49,6 @@ def off_tile_count(paths, tree, cx, cy, L, ngrid=160):
     return sum(1 for i, p in enumerate(pts) if not any(paths[j].contains_point(p) for j in nbr[i]))
 
 
-def off_tile_fraction(member, patch, cx, cy, L, ngrid=160):
-    """Convenience: build the member's polygons and return the off-tile fraction of an L-window."""
-    polys = [np.asarray(p, float) for p in member_polys(member, patch)]
-    paths = [Path(p) for p in polys]
-    tree = cKDTree(np.array([p.mean(axis=0) for p in polys]))
-    return off_tile_count(paths, tree, cx, cy, L, ngrid) / (ngrid * ngrid)
-
-
 def _coords_and_polys(member, patch):
     """Deduped graph vertices AND tile polygons of a member's patch, from a SINGLE build.
 

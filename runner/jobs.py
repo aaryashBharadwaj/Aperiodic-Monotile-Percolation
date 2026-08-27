@@ -3,7 +3,7 @@
 runner/runner.py uses this to give each run a deterministic id (so an interrupted run resumes from
 its OWN checkpoint instead of starting over) and to write its status/checkpoint files atomically.
 
-    make_job_id / job_paths   -> deterministic id + on-disk paths (status / ckpt / log / stop)
+    make_job_id / job_paths   -> deterministic id + on-disk paths (status / ckpt / stop)
     write_status / _safe_replace -> atomic status and checkpoint writes
 
 This module formerly also launched runner.py as a detached process and polled it for the GUI's
@@ -43,7 +43,7 @@ def make_job_id(member, kind, patch, a, b, Lmin, Lmax, gap, T, seed):
 def job_paths(jid):
     jd = _jobs_dir()
     return {"status": os.path.join(jd, jid + ".json"), "ckpt": os.path.join(jd, jid + ".npz"),
-            "log": os.path.join(jd, jid + ".log"), "stop": os.path.join(jd, jid + ".stop")}
+            "stop": os.path.join(jd, jid + ".stop")}
 
 
 def _safe_replace(src, dst, tries=25, delay=0.05):

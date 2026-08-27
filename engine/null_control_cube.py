@@ -21,7 +21,6 @@ from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
                                 percolationStatsExponents_par)
 from engine.analysis import extrapolate_pc_raw
 
-CUBE_PC_SITE = 0.311608          # simple-cubic site threshold (literature)
 NU_3D = 0.8762                   # 3D percolation correlation-length exponent (literature)
 DF_3D = 2.5230                   # 3D percolation fractal dimension (literature)
 
@@ -63,9 +62,9 @@ def run_cube_sweep(L_list, T=2000, seed=12345, exponents=True):
 
 
 def width_nu(L_list, channels, nu_lo=0.6, nu_hi=1.6, omega=1.0):
-    """Same width-line estimator as engine.analysis.fit_nu (std(onset) ~ L^{-1/nu}, amplitudes profiled
-    out, correction term at fixed omega) but with a WIDE nu bound so a 3D value (~0.88) is reachable -- the
-    2D fitter clamps to [1.10, 1.60]. channels = list of per-L onset-array lists sharing nu."""
+    """Same width-line estimator as engine.analysis._width_gof (std(onset) ~ L^{-1/nu}, amplitudes
+    profiled out, correction term at fixed omega) but with a WIDE nu bound so a 3D value (~0.88) is
+    reachable -- the 2D fitter clamps to [1.10, 1.60]. channels = list of per-L onset-array lists sharing nu."""
     L = np.asarray(L_list, float)
     widths = [np.array([np.std(a, ddof=1) for a in ch]) for ch in channels]
     sigmas = [w / np.sqrt(2.0 * (len(ch[0]) - 1)) for w, ch in zip(widths, channels)]

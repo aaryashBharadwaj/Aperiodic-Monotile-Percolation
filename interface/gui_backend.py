@@ -37,12 +37,9 @@ from generators.periodic_tiling_generator import square_tiles, triangular_tris  
 
 S3 = math.sqrt(3)
 NU = 4.0 / 3.0                                                    # imported by visualiser.figures (fss_figure)
-# All results live under one folder: paper_results/npz (the .npz + job checkpoints) and
-# paper_results/figures (rendered figures). Contents are regenerated/contingent and gitignored;
-# only the folders are tracked (.gitkeep). RESULTS_DIR/PAPER_DIR are the same dir now.
+# All results live under paper_results/npz (the .npz + job checkpoints). Contents are regenerated/
+# contingent and gitignored; only the folder is tracked (.gitkeep).
 RESULTS_DIR = os.path.join(REPO_ROOT, "paper_results", "npz")     # all result .npz + checkpoints (cwd-independent)
-PAPER_DIR = RESULTS_DIR                                           # kept as an alias (single results folder)
-FIG_DIR = os.path.join(REPO_ROOT, "paper_results", "figures")    # rendered figures (run_tiling_render output)
 
 TRI = "Triangular → Honeycomb"          # the dual-of-triangular validation (exact honeycomb)
 FAMILY = "Tile(a,b) family"
@@ -469,20 +466,6 @@ def save_result(result, member, kind, seed, T, name=None, out_dir=RESULTS_DIR):
                        raw_bond_smax_inter=result.get("raw_bond_smax_inter"),
                        extra_meta={"source": "gui"}).save(path)
     return path
-
-
-def delete_result(fname, out_dir=None):
-    """Remove a saved result and its _iso/_exp sidecars from disk -- the GUI 'discard' path for an
-    exploratory run the user didn't ask to keep. Silently ignores anything already gone."""
-    base = out_dir or RESULTS_DIR
-    targets = [fname, fname[:-4] + "_iso.npz", fname[:-4] + "_exp.npz"]
-    for t in targets:
-        p = os.path.join(base, t)
-        try:
-            if os.path.exists(p):
-                os.remove(p)
-        except OSError:
-            pass
 
 
 def list_saved(out_dir=None):
