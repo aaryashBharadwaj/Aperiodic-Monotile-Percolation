@@ -5,8 +5,9 @@ square (partially-filled fringe cells pass its occupancy threshold), so the 0.95
 that wasn't even enough for the fractal-boundary folded endpoints. This replaces the guess with a
 measurement: sample a grid over a candidate window and require it to be fully covered by tile polygons,
 plus a small tiled buffer so the window is SURROUNDED (hence fully coordinated, not just gap-free).
-`measure_solid_L` binary-searches the largest such window. The result is verifiable by the same test
-that produced it (builders/verify_solid_windows.py). No percentage fudge anywhere.
+`measure_solid_L` binary-searches the largest such window. The result is self-certifying: the returned
+cap is, by construction, the largest window with 0% off-tile coverage, so re-running the measurement
+reproduces the bound and confirms it. No percentage fudge anywhere.
 """
 import numpy as np
 from scipy.spatial import cKDTree

@@ -405,8 +405,9 @@ with tab_run:
                 how = ("the largest window measured to be fully tiled (0% off-tile) with a coordinated "
                        "buffer" if meas else "0.95× the detected solid square (uncalibrated fallback)")
                 st.caption(f"Largest useful **L** for this patch ≈ **{usable_max:.0f}** "
-                           f"(bigger windows are skipped). This is {how}; "
-                           "`builders/verify_solid_windows.py` reproduces the check.")
+                           f"(bigger windows are skipped). This is {how}; the measurement "
+                           "(`builders/solid_window.py`) is self-certifying — the cap is the largest "
+                           "0%-off-tile window by construction.")
 
             if not is_cardy:
                 st.session_state.setdefault("run_lmin", 10.0)
