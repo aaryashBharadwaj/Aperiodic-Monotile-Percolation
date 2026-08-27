@@ -2,6 +2,7 @@ import math
 import itertools
 
 import numpy as np
+from matplotlib.path import Path
 import generators.hat_generator as hg
 from builders.direct_graph_builder import graph_from_polygons
 
@@ -34,38 +35,29 @@ def tile_ab(a, b):
 # This is because cells makes it easier to see if your tiling is covering without overlap or gaps
 # This requires tiles built on triangles
 def tri_set(poly):
-    # creates an empty set out for the covered cells (set so duplicates don't build up)
-    # xs and ys are the x and y component for every polygon
-    P = [tuple(p) for p in poly]; xs = poly[:, 0]; ys = poly[:, 1]; out = set()
+    # Return the set of triangular-grid cells (i, j, s) whose CENTROID lies inside the tile polygon.
+    # Containment is matplotlib.path.Path.contains_points -- the same point-in-polygon the rest of the
+    # repo uses -- vectorised over every candidate centroid. This is exact for this problem: each
+    # centroid is the 1/3-point of a grid triangle and tile edges run along grid lines, so a centroid
+    # never sits on a tile edge and the classification matches the old hand-rolled ray cast cell-for-cell.
+    xs = poly[:, 0]; ys = poly[:, 1]
+    path = Path(np.asarray(poly, float))
     def cent(i, j, s):
-        # each cell v[0] * E1 + v[1] * E2 forming a parallelogram
-        # this splits each parallelogram into two triangles, s=0 which is the bottom left and s=1 the top right
-        # thus each cell is described by i, j, s
+        # each cell v[0] * E1 + v[1] * E2 forms a parallelogram, split into two triangles: s=0 the
+        # bottom-left, s=1 the top-right. The centroid is the mean of the triangle's three grid vertices.
         vs = [(i, j), (i + 1, j), (i, j + 1)] if s == 0 else [(i + 1, j), (i + 1, j + 1), (i, j + 1)]
-        # averaging the 3 centres gives you the centroid 
-        c = sum(v[0] * E1 + v[1] * E2 for v in vs) / 3.0; return c
-    # Standard ray casting: fire a ray to the right from the point and count how many edges it crosses. Odd means inside, even means outside
-    # Test one ray per triangle centroid 
-    # (px, py) and (qx, qy) are vertices that together form the current edge
-    def pip(x, y):
-        n = len(P); ins = False; px, py = P[-1]
-        for qx, qy in P:
-            # (qy > y) != (py > y) checks if an edge is above or below the ray, if not it goes through
-            if ((qy > y) != (py > y)) and (x < (px - qx) * (y - qy) / (py - qy + 1e-30) + qx): ins = not ins
-            px, py = qx, qy
-        # if ins is false, it's outside otherwise it's inside
-        return ins
-    # this finds for a tile, the x values to test (error bounds +- 2)
-    # A tile reaching to x = -3.7 needs column -4 checked, and the tight range would start at -3 and miss it.
+        return sum(v[0] * E1 + v[1] * E2 for v in vs) / 3.0
+    # Candidate cells over the tile's bounding box, padded by 2 (a tile reaching x=-3.7 needs column -4,
+    # which a tight range would miss). One containment call over all their centroids.
+    cells, cents = [], []
     for i in range(int(xs.min()) - 2, int(xs.max()) + 2):
-        # this checks the y values to test ( error bounds +- 2)
         for j in range(int(ys.min() / (SQ3 / 2)) - 2, int(ys.max() / (SQ3 / 2)) + 2):
-            # checks if the chosen cell is inside the tile or not
-            # This gives us the tile as a list of grid cells
             for s in (0, 1):
-                c = cent(i, j, s)
-                if pip(c[0], c[1]): out.add((i, j, s))
-    return out
+                cells.append((i, j, s)); cents.append(cent(i, j, s))
+    if not cents:
+        return set()
+    inside = path.contains_points(np.asarray(cents, float))
+    return {cells[k] for k in range(len(cells)) if inside[k]}
 
 # You have one comet tile. Where do you put copies of it so they cover the plane perfectly?
 # Try every possible pair of vectors. There are 6561 pairs (81 choices for u1, 81 for u2). For each pair, ask "does this work?" Return the first that does.
