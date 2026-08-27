@@ -14,12 +14,11 @@ directions span, Union = either -- exactly the 2D bracket, now in 3D.
     python -m engine.null_control_cube            # default sweep, ~1-2 min
 """
 import numpy as np
-from scipy.optimize import minimize_scalar
 
 from builders.graph_core import edges_to_adjacency
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
                                 percolationStatsExponents_par)
-from engine.analysis import extrapolate_pc_raw
+from engine.analysis import extrapolate_pc_raw, _width_gof
 
 NU_3D = 0.8762                   # 3D percolation correlation-length exponent (literature)
 DF_3D = 2.5230                   # 3D percolation fractal dimension (literature)
@@ -68,18 +67,9 @@ def width_nu(L_list, channels, nu_lo=0.6, nu_hi=1.6, omega=1.0):
     L = np.asarray(L_list, float)
     widths = [np.array([np.std(a, ddof=1) for a in ch]) for ch in channels]
     sigmas = [w / np.sqrt(2.0 * (len(ch[0]) - 1)) for w, ch in zip(widths, channels)]
-
-    def chi2(nu):
-        tot = 0.0
-        for w, sig in zip(widths, sigmas):
-            M = np.column_stack([L ** (-1.0 / nu), L ** (-1.0 / nu - omega)]); Wt = 1.0 / sig ** 2
-            try:
-                c = np.linalg.solve((M * Wt[:, None]).T @ M, (M * Wt[:, None]).T @ w)
-            except np.linalg.LinAlgError:
-                return 1e18
-            tot += float(np.sum(Wt * (w - M @ c) ** 2))
-        return tot
-    return float(minimize_scalar(chi2, bounds=(nu_lo, nu_hi), method="bounded").x)
+    # Same profiled-amplitude chi^2 fit as the 2D analysis, just a wider nu bracket -- delegate to it
+    # instead of keeping a second copy of the kernel.
+    return _width_gof(L, widths, sigmas, omega, bounds=(nu_lo, nu_hi))[0]
 
 
 def _df_from_smax(L_list, smax, L_min=0):

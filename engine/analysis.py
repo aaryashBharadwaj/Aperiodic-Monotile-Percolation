@@ -199,12 +199,14 @@ def fit_exponents(L_list, smax, B=200, seed=17):
 
 
 # ---- correlation-length exponent nu from the transition width (omega is an INPUT, not a fit) ----
-def _width_gof(L, widths, sigmas, omega):
+def _width_gof(L, widths, sigmas, omega, bounds=(1.10, 1.60)):
     """Best-fit nu at fixed omega, PLUS the joint chi^2 and its dof -- the goodness-of-fit the adaptive
     cutoff tests. Model per channel: std(onset) = A L^{-1/nu} (1 + B L^{-omega}); the amplitudes (A, A*B)
     are profiled out linearly, nu is shared across channels, omega is held fixed. Several channels
     (site/bond, I/U) share nu but keep independent amplitudes, which is what tightens nu. Free parameters =
-    2 per channel (the amplitudes) + 1 (nu), so dof = (points x channels) - (2*channels + 1)."""
+    2 per channel (the amplitudes) + 1 (nu), so dof = (points x channels) - (2*channels + 1). `bounds`
+    clamps the nu search -- the 2D default brackets 4/3; the 3D null control (null_control_cube.width_nu)
+    passes a wider range so a ~0.88 value is reachable."""
     from scipy.optimize import minimize_scalar
     def chi2(nu):
         tot = 0.0
@@ -216,7 +218,7 @@ def _width_gof(L, widths, sigmas, omega):
                 return 1e18
             tot += float(np.sum(Wt * (w - M @ c) ** 2))
         return tot
-    nu = float(minimize_scalar(chi2, bounds=(1.10, 1.60), method="bounded").x)
+    nu = float(minimize_scalar(chi2, bounds=bounds, method="bounded").x)
     n_ch = len(widths); m = len(L)
     return nu, chi2(nu), max(1, m * n_ch - (2 * n_ch + 1))
 

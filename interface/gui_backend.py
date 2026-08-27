@@ -280,6 +280,14 @@ def _frame_usable(fd):
         len(fd["left_boundary_nodes"]), len(fd["right_boundary_nodes"])) > 0)
 
 
+def _window_cap(bundle):
+    """Largest usable window side for a built bundle: the MEASURED solid-window cap (the off-tile
+    oracle, builders.solid_window) when calibrated, else the 0.95*side density-heuristic fallback for
+    uncalibrated configs, else None. A window past it clips the ragged tiling fringe and biases
+    spanning, so run_one/run_crossing reject it (and runner.py warns). The paper presets sit at it."""
+    return bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+
+
 def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
     """Percolate ONE L-window (the 4 estimators). Returns a dict; usable=False if the frame is empty
     or pokes outside the tiling. Factored out so the GUI can drive the sweep one size per rerun --
@@ -291,12 +299,7 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
     warm_up()
     # 0 -> let each stats class fall back to its _NW default; a positive value overrides it.
     nwkw = {"nworkers": int(nworkers)} if nworkers and int(nworkers) > 0 else {}
-    # Window cap: bundle["side_cap"] is the MEASURED largest fully-tiled+surrounded window (the off-tile
-    # oracle, builders.solid_window / builders.verify_solid_windows) -- 0% off-tile by construction, tight on
-    # the ragged folded-endpoint boundaries where the old 0.95*side heuristic over-reached. build_graph
-    # sets it; it falls back to 0.95*side only for uncalibrated configs. A window past it clips the fringe
-    # and biases spanning, so reject it (the paper presets all sit at side_cap).
-    cap = bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+    cap = _window_cap(bundle)                            # measured solid window (see _window_cap)
     if cap is not None and L > cap + 1e-9:
         return {"usable": False, "L": float(L)}
     fd = _frame_data(bundle, L, bt)
@@ -335,7 +338,7 @@ def run_crossing(bundle, W, H, T, seed_base, bt=1.0, nworkers=0):
     usable=False if the frame is empty or the rectangle pokes outside the tiling's solid core."""
     warm_up()
     # the rectangle must sit inside the measured solid window; cap on its larger half-extent
-    cap = bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+    cap = _window_cap(bundle)
     if cap is not None and max(W, H) > cap + 1e-9:
         return {"usable": False}
     cx, cy = bundle["center"]

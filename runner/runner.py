@@ -166,10 +166,9 @@ def main():
         # enough for the whole sweep (else large-L frames fall outside the patch and skip).
         pscale = int(2 * args.lmax) if member == "Penrose" else None
         bundle = gb.build_graph(args.tiling, graph, patch, a, b, scale=pscale)
-        # run_one caps windows at 0.95*side (side = inscribed square from largest_square_center, minus a
-        # 5% margin so the largest window sits just inside the tiling). Warn a console user whose --lmax
-        # overshoots that cap, so a capped sweep isn't a silent surprise (the paper presets sit under it).
-        _cap = bundle.get("side_cap") or (0.95 * bundle["side"] if bundle.get("side") else None)
+        # run_one/run_crossing cap windows at the measured solid-window (else 0.95*side). Warn a console
+        # user whose --lmax overshoots that cap, so a capped sweep isn't a silent surprise.
+        _cap = gb._window_cap(bundle)
         if _cap is not None and args.lmax > _cap + 1e-9:
             print(f"  note: --lmax {args.lmax:g} exceeds the measured solid-window cap {_cap:.0f} "
                   f"for this patch; larger sizes clip the fringe and will be skipped.", flush=True)
