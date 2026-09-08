@@ -64,25 +64,41 @@ def main():
     cardy = np.array([cardy_pi_h(a_) for a_ in aspects])
     floor = float(np.sqrt(0.25 / args.trials))
 
-    windows_done, Rh_rows, pstar_list = [], [], []
+    windows_done, Rh_rows, pstar_list, band_rows = [], [], [], []
+    B_ANCHOR = 400          # bootstrap resamples of the square's pR -> the anchor-uncertainty band
     for wi, L in enumerate(args.windows):
         sq = gb.run_crossing(bundle, L, L, args.trials, args.seed + wi * 1000, bt, nworkers=args.threads)
         if not sq.get("usable"):
             print(f"  L={L:.0f}: square window unusable (too large for this patch) -- skipped", flush=True)
             continue
-        pstar = float(np.median(np.asarray(sq["pR"], float)))
+        sq_pR = np.asarray(sq["pR"], float)
+        pstar = float(np.median(sq_pR))
         Rh = np.full(len(aspects), np.nan)
+        aspect_pR = [None] * len(aspects)               # keep each aspect's raw crossings for the band
         for ai, asp in enumerate(aspects):
             W = L * np.sqrt(asp); H = L / np.sqrt(asp)
             r = gb.run_crossing(bundle, W, H, args.trials, args.seed + wi * 1000 + ai + 1, bt,
                                 nworkers=args.threads)
             if r.get("usable"):
-                Rh[ai] = crossing_probability(r["pR"], pstar)
+                aspect_pR[ai] = np.asarray(r["pR"], float)
+                Rh[ai] = crossing_probability(aspect_pR[ai], pstar)
+        # ANCHOR-BOOTSTRAP BAND: p* is a median of T square crossings, so it carries a statistical
+        # error that the steep crossing curve amplifies into a CORRELATED shift of every aspect's R_h
+        # (this is what makes a small p* wobble show up as a same-sign offset across the whole curve).
+        # Resample the square's pR, recompute p* and every crossing, and report the per-aspect std as
+        # the (correlated) anchor uncertainty. No extra runs -- pure post-processing of the square's pR.
+        rng = np.random.default_rng(args.seed + wi * 1000 + 99991)
+        n_sq = len(sq_pR)
+        boot_pstars = np.array([np.median(sq_pR[rng.integers(0, n_sq, n_sq)]) for _ in range(B_ANCHOR)])
+        band = np.full(len(aspects), np.nan)
+        for ai in range(len(aspects)):
+            if aspect_pR[ai] is not None:
+                band[ai] = float(np.std([crossing_probability(aspect_pR[ai], ps) for ps in boot_pstars]))
         res = Rh - cardy
         rms = float(np.sqrt(np.nanmean(res ** 2)))
-        windows_done.append(float(L)); Rh_rows.append(Rh); pstar_list.append(pstar)
-        print(f"  L={L:.0f}  N~{sq['N']:,}  p*={pstar:.4f}  "
-              f"RMS(R_h - Cardy)={rms:.4f}  (noise floor {floor:.4f})", flush=True)
+        windows_done.append(float(L)); Rh_rows.append(Rh); pstar_list.append(pstar); band_rows.append(band)
+        print(f"  L={L:.0f}  N~{sq['N']:,}  p*={pstar:.4f}  RMS(R_h - Cardy)={rms:.4f}  "
+              f"(noise floor {floor:.4f}, anchor band ~{np.nanmedian(band):.4f})", flush=True)
 
     if not windows_done:
         print("no usable windows -- nothing saved.", flush=True)
@@ -92,7 +108,8 @@ def main():
                                    f"cardy_{member}_{args.graph}_patch{args.patch}.npz")
     np.savez(out, member=str(member), graph=str(graph), patch=args.patch,
              aspects=aspects, cardy=cardy, windows=np.array(windows_done, float),
-             Rh=np.array(Rh_rows, float), pstar=np.array(pstar_list, float),
+             Rh=np.array(Rh_rows, float), Rh_band=np.array(band_rows, float),
+             pstar=np.array(pstar_list, float),
              trials=args.trials, noise_floor=floor, seed=args.seed)
     print(f"\ndone in {time.time() - started:.0f}s -- saved -> {out}", flush=True)
 

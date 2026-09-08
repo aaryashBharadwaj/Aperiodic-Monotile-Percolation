@@ -11,7 +11,7 @@ the tiling you run are selected independently, on their own pages):
                  or runner/cardy_runner.py command. The run itself happens in a terminal (it
                  checkpoints, resumes and auto-saves); the GUI doesn't launch or monitor the worker.
   * Analyse saved — reload any run from paper_results/npz/ and show its analysis: a p_c sweep gives
-                 p_c + direction-bias check + fractal dimension d_f; a Cardy run gives the crossing
+                 p_c + direction-bias check; a Cardy run gives the crossing
                  curve vs Cardy's exact prediction.
 
 All numerics come from the same builders/kernels the runner uses (via gui_backend). Converged
@@ -135,29 +135,6 @@ def show_results(res, label, key_prefix, meta=None):
         if res.get("isotropy_bond"): _bias_block(res["isotropy_bond"], "bond")
     else:
         st.caption("Direction-bias check was not recorded for this run.")
-
-    if res.get("exponents"):
-        e = res["exponents"]; lo, hi = e["d_f_ci"]; h = e["hyperscaling"]
-        st.markdown(r"**Fractal dimension $d_f$ (universality class)**  " + "\n" +
-                    r"Incipient spanning cluster: $\langle S_{\max}\rangle \sim L^{d_f}$.  " +
-                    rf"$d_f = {e['d_f']:.4f}$  (95% CI $[{lo:.4f}, {hi:.4f}]$; 2D percolation "
-                    rf"$= \tfrac{{91}}{{48}} \approx 1.8958$)")
-        st.caption(rf"$d_f$ (measured) with $\nu$ (from the crossing width) fix the class; the other "
-                   rf"static exponents follow by hyperscaling ($\tau = {h['tau']:.3f}$, "
-                   rf"$\gamma/\nu = {h['gamma_nu']:.3f}$, $\beta/\nu = {h['beta_nu']:.4f}$) and are not "
-                   rf"measured directly.")
-        # (A plain log-log <S_max>-vs-L plot was dropped: on log axes the fit and the 91/48 reference
-        #  sit on top of each other, so it showed nothing the number and the convergence plot don't.)
-        fdc = figs.df_convergence_figure(res)
-        if fdc is not None:
-            st.caption(r"Convergence check: refit the $d_f$ slope dropping the smallest sizes. With no "
-                       r"corrections-to-scaling imposed, the effective exponent drifts to $\tfrac{91}{48}$ "
-                       r"on its own as finite-size (small-$L$) points fall away. Solid points are kept on "
-                       r"a value-blind error budget (95% CI $\leq 0.02$); the volatile tail (few sizes "
-                       r"left) is excluded on the error, not on the value.")
-            st.pyplot(fdc, width="content")
-            st.download_button("Download d_f convergence plot", _fig_bytes(fdc), mime="image/png",
-                               file_name=f"{key_prefix}_df_convergence.png", key=f"{key_prefix}_dl_dfc")
 
     # correlation-length exponent nu -- shown across the full correction-exponent band (omega is not
     # measurable at these sizes), gated behind a checkbox since it bootstraps three curves.
@@ -424,12 +401,12 @@ with tab_run:
                                       help="Spacing between window sizes.")
                 T = rd.number_input("Trials per L", min_value=1, step=50, key="run_trials",
                                     help="Monte-Carlo trials per L. More trials means smaller error bars.")
-                want_exp = st.checkbox("Also measure d_f  (--exponents; extra cluster pass, ~+20% time)",
+                want_exp = st.checkbox("Also record cluster sizes  (--exponents; extra cluster pass, ~+20% time)",
                                        value=False, key="run_exponents",
-                                       help="Largest-cluster pass: records the incipient-cluster size per "
-                                            "trial -> the fractal dimension d_f (⟨s_max⟩ ~ L^d_f), one of "
-                                            "the two exponents that fix the universality class. The paper's "
-                                            "universality runs turn it on.")
+                                       help="Largest-cluster pass: records the incipient spanning-cluster "
+                                            "size ⟨s_max⟩ per trial and stores it with the run — a genuine "
+                                            "structural observable kept for later analysis. Nothing in the "
+                                            "app analyses it.")
             else:
                 st.session_state.setdefault("cardy_windows",
                                             f"{usable_max*0.4:.0f}, {usable_max*0.7:.0f}" if usable_max

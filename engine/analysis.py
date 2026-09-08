@@ -46,13 +46,17 @@ def _wls_fit(x, y, sigma, n, confidence):
 
 
 def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confidence=0.95,
-                       bias_floor=None, cutoff_conf=0.95):
+                       bias_floor=None, cutoff_conf=0.95, dir_bias=None):
     # bias_floor: if given, the reported systematic is floored at this value -- the size of the residual
     # finite-size bias that the KNOWN-lattice controls show at this run's reach (a self-hiding systematic
     # the fit-window scan can miss). Supplied by the reporting layer from the control "bias ruler".
     # cutoff_conf: the adaptive low-L cutoff is chosen by a chi^2 GOODNESS-OF-FIT test at this confidence
     # rather than an arbitrary L or chi2_red threshold. We include the most points (best lever arm) for
     # which the leading-order line is not rejected at cutoff_conf (p-value > 1-cutoff_conf).
+    # dir_bias: the extrapolated direction bias p_R - p_D from isotropy_test (or None). The reported
+    # estimator p_A = (p_R+p_D)/2 sits |dir_bias|/2 from either directional threshold, so when the two
+    # directions differ in the limit this is an unquoted systematic on p_A. Its sign is unknown (we
+    # measure the gap, not the asymmetry), so it only widens the error -- folded into the A channel below.
     L  = np.array(L_list, dtype=float)
     n  = len(L)
     # The finite estimates approach the true p_c using a critical exponent nu = 4/3, so we use this to estimate p_c
@@ -118,6 +122,11 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
         # (3) BIAS-RULER FLOOR. Known-lattice controls at this reach miss the truth by >= bias_floor (a
         # self-hiding finite-size bias the fit-window scan can't see); floor the systematic there.
         syst = max(pc_syst, float(bias_floor or 0.0))
+        # (4) DIRECTION SYSTEMATIC (averaged estimator only). p_A = (p_R+p_D)/2 sits |dir_bias|/2 from
+        # either directional threshold; when the two directions differ in the limit that residual is a
+        # real, unquoted systematic on p_A. Sign unknown -> widens the error, never moves the centre.
+        dir_syst = abs(float(dir_bias)) / 2.0 if (label == 'A' and dir_bias) else 0.0
+        syst = float(np.hypot(syst, dir_syst))
         pc_std = float(np.hypot(pc_std_stat, syst))
         t_crit = stats.t.ppf((1 + confidence) / 2, df=max(1, nrem - 2))
         pc_ci  = (pc_hat - t_crit * pc_std, pc_hat + t_crit * pc_std)
@@ -125,19 +134,20 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
         results[label] = {
             'pc'         : pc_hat,
             'A'          : A_hat,
-            'pc_std'     : pc_std,          # total: stat (+) max(fit-window syst, bias-ruler floor)
+            'pc_std'     : pc_std,          # total: stat (+) max(fit-window syst, bias floor) (+) dir_syst
             'pc_ci'      : pc_ci,
             'A_std'      : A_std,
             'chi2_red'   : chi2_red,
             'pc_std_stat': pc_std_stat,     # statistical (chi2-inflated)
             'pc_syst'    : pc_syst,         # fit-window (extrapolation)
             'bias_floor' : float(bias_floor or 0.0),
+            'dir_syst'   : dir_syst,        # direction-bias systematic on the averaged estimator (|d_inf|/2)
             'cutoff_L'   : float(round(x[k0] ** (-nu))),
             'n_used'     : nrem,
         }
         print(f"[{label}] p_c = {pc_hat:.6f} ± {pc_std:.6f}  "
               f"(stat {pc_std_stat:.6f}, syst {pc_syst:.6f}, floor {float(bias_floor or 0.0):.6f}, "
-              f"chi2={chi2_red:.2f}, fit L>={int(round(x[k0]**(-nu)))}, {nrem} pts)")
+              f"dir {dir_syst:.6f}, chi2={chi2_red:.2f}, fit L>={int(round(x[k0]**(-nu)))}, {nrem} pts)")
 
     return results
 
@@ -176,26 +186,11 @@ def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
     return d_inf, d_ci, unbiased
 
 
-# ---- Largest-cluster pass: the fractal dimension d_f from the incipient-infinite-cluster size ----
-def fit_exponents(L_list, smax, B=200, seed=17):
-    rng = np.random.default_rng(seed)
-    L = np.asarray(L_list, float); logL = np.log(L)
-    # smax is a list of 'largest clusters' for each trial of a given L
-    # we average this to get an average largest cluster per L
-    smax = [np.asarray(s, float) for s in smax]
-    slope = lambda means: float(np.polyfit(logL, np.log(means), 1)[0])
-    d_f = slope([s.mean() for s in smax])
-    # run a bootstrap for every L because the data is skewed
-    # So we randomly select a number of clusters equal to the number of trials, with repetition
-    # We use this to approximate the distribution and pick the 95% interval to get a distribution
-    boot = [slope([s[rng.integers(0, len(s), len(s))].mean() for s in smax]) for _ in range(B)]
-    ci = (float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5)))
-    # d is the spatial dimension, this is 2D
-    d = 2.0
-    # return the other universality constants derived by the ones we have
-    # direct estimators for γ/ν and τ are biased by open boundaries, so measuring them would give worse numbers than deriving them
-    return {"d_f": d_f, "d_f_ci": ci,
-            "hyperscaling": {"tau": 1 + d / d_f, "gamma_nu": 2 * d_f - d, "beta_nu": d - d_f}}
+# ---- Largest-cluster (incipient-cluster) size is RECORDED as a raw observable (percolation.py's
+# exponent kernels -> results.py raw_smax) but is NOT analysed here. The fractal-dimension fit was
+# removed 2026-09-08: d_f from <S_max> is boundary-suppressed on open patches (a clean determination
+# needs a boundary-free geometry, which aperiodic tilings can't provide), so it isn't a paper claim.
+# The archived s_max arrays are left, with that caveat, for independent future analysis.
 
 
 # ---- correlation-length exponent nu from the transition width (omega is an INPUT, not a fit) ----

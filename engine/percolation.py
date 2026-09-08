@@ -231,7 +231,7 @@ class percolationStatsBondU_par(percolationStatsBondI_par):
 
 
 # Finds the largest cluster at percolation using a third union-find
-# This is done to find the universality class of the percolation
+# Recorded as an ARCHIVED raw observable (was used for d_f; the d_f analysis was removed -- boundary-limited on open patches)
 @njit(cache=True, nogil=True)
 def _site_cluster_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, N):
     parentTB = np.arange(N + 2); sizeTB = np.ones(N + 2, dtype=np.int64)
@@ -240,8 +240,8 @@ def _site_cluster_trial(nbrs, starts, is_top, is_bot, is_left, is_right, order, 
     opened = np.zeros(N, dtype=np.bool_)
     vTop = N; vBot = N + 1; vL = N; vR = N + 1
     onset_u = -1; onset_i = -1
-    # s_union is the largest cluster at the union percolation and s_intersection at intersection
-    # Since they share an exponent, these should be close together
+    # s_union is the largest cluster at the union onset and s_inter at the intersection onset
+    # (recorded as archived observables; not analysed here)
     s_max = 0; s_union = 0; s_inter = 0
     for step in range(N):
         idx = order[step]
@@ -297,15 +297,15 @@ class percolationStatsExponents_par:
         with ThreadPoolExecutor(max_workers=nworkers) as ex:
             res = list(ex.map(one, range(trials)))
         self.N = N
-        # returns the functions at percolation relevent to df
+        # returns the largest-cluster sizes at onset (archived observable)
         self.s_union = np.array([r[2] for r in res], dtype=float)
         self.s_inter = np.array([r[3] for r in res], dtype=float)
         self.s_max = self.s_union
 
 
 # Bond version of the largest-cluster pass: same largest-cluster-at-onset readout, but edges open one at a time
-# Cluster mass is counted in SITES (node count), like the site pass, so the bond d_f is directly comparable to the site d_f
-# d_f is universal, so this should reproduce the  same value as the site
+# Cluster mass is counted in SITES (node count), like the site pass, so the two are directly comparable
+# (recorded as an archived observable; d_f is not computed)
 @njit(cache=True, nogil=True)
 def _bond_cluster_trial(eu, ev, top, bot, left, right, order, num_nodes, num_edges):
     parentTB = np.arange(num_nodes + 2); sizeTB = np.ones(num_nodes + 2, dtype=np.int64)

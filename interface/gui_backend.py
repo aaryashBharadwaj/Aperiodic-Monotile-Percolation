@@ -30,7 +30,7 @@ from builders.graph_core import analyze_square_frame, analyze_rect_frame   # fra
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
                          percolationStatsBondI_par, percolationStatsBondU_par,
                          percolationStatsExponents_par, percolationStatsBondExponents_par)
-from engine.analysis import extrapolate_pc_raw, isotropy_test, fit_exponents
+from engine.analysis import extrapolate_pc_raw, isotropy_test
 from visualiser.run_tiling_render import _threshold_class
 from generators.chevron_and_comet import periodic_graph, periodic_polys
 from generators.periodic_tiling_generator import square_tiles, triangular_tris   # validated periodic geometry
@@ -319,12 +319,13 @@ def run_one(bundle, L, T, seed_base, bt=1.0, exponents=False, nworkers=0):
            "BU": percolationStatsBondU_par(*E, T, master_seed=seed_base + 3, **nwkw).trialResults}
     if exponents:
         # OPT-IN largest-cluster pass (extra sweep, s_max tracked incrementally): records the per-trial
-        # largest cluster at first-spanning (the incipient infinite cluster) -> d_f. seed_base+4
-        # keeps it independent of the four threshold seeds.
+        # largest cluster at first-spanning (the incipient infinite cluster) as an ARCHIVED observable
+        # (d_f is NOT computed -- boundary-limited on open patches). seed_base+4 keeps it independent
+        # of the four threshold seeds.
         ex = percolationStatsExponents_par(*A, T, master_seed=seed_base + 4, **nwkw)
-        out["s_max"] = ex.s_max        # union-onset s_max (d_f; original behaviour)
-        out["s_max_i"] = ex.s_inter    # intersection-onset s_max (the d_f onset-definition bracket)
-        # bond d_f (mass in sites): universal, so it cross-checks the site value. seed_base+5 (spare slot).
+        out["s_max"] = ex.s_max        # union-onset largest cluster (archived observable)
+        out["s_max_i"] = ex.s_inter    # intersection-onset largest cluster (onset-definition bracket)
+        # bond largest-cluster pass (mass in sites), archived too. seed_base+5 (spare slot).
         exb = percolationStatsBondExponents_par(*E, T, master_seed=seed_base + 5, **nwkw)
         out["bond_s_max"] = exb.s_max
         out["bond_s_max_i"] = exb.s_inter
@@ -391,8 +392,9 @@ def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=N
                        raw_bond_pR=None, raw_bond_pD=None, raw_smax=None, raw_smax_inter=None,
                        raw_bond_smax=None, raw_bond_smax_inter=None):
     """Assemble the result dict + the FULL analysis: p_c extrapolation (I/U/A); the direction-bias
-    check (if pR/pD present) -- site (raw_pR/raw_pD -> 'isotropy') and bond (raw_bond_* -> 'isotropy_bond');
-    and d_f (if raw_smax present -> 'exponents'). Needs >=3 sizes; fields stay None otherwise. Works on
+    check (if pR/pD present) -- site (raw_pR/raw_pD -> 'isotropy') and bond (raw_bond_* -> 'isotropy_bond').
+    Needs >=3 sizes; fields stay None otherwise. The raw cluster-size arrays (raw_smax*) are recorded and
+    stored with the run but not analysed here. Works on
     a PARTIAL sweep too, so a stopped run still yields whatever it collected."""
     out = {"L": valid, "raw_SI": rSI, "raw_SU": rSU, "raw_BI": rBI, "raw_BU": rBU,
            "skipped": skipped, "raw_pR": raw_pR, "raw_pD": raw_pD,
@@ -400,43 +402,28 @@ def extrapolate_result(valid, rSI, rSU, rBI, rBU, skipped, raw_pR=None, raw_pD=N
            "raw_smax_inter": raw_smax_inter,
            "raw_bond_smax": raw_bond_smax, "raw_bond_smax_inter": raw_bond_smax_inter,
            "site": None, "bond": None, "isotropy": None, "isotropy_bond": None,
-           "exponents": None, "exponents_inter": None,
-           "exponents_bond": None, "exponents_bond_inter": None, "lmin": None}
+           "lmin": None}
     if len(valid) >= 3:
-        out["site"] = extrapolate_pc_raw(valid, rSI, rSU)
-        if rBI and rBU and rBI[0] is not None:
-            out["bond"] = extrapolate_pc_raw(valid, rBI, rBU)
         lmin = _pick_lmin(valid); out["lmin"] = lmin
-        for key, pR, pD in [("isotropy", raw_pR, raw_pD),
-                            ("isotropy_bond", raw_bond_pR, raw_bond_pD)]:
+        # Direction bias FIRST: p_A = (p_R+p_D)/2 blends the two spanning directions, so a limit
+        # difference p_R != p_D is a systematic on p_A. We fold |d_inf|/2 into the averaged estimator's
+        # error (in extrapolate_pc_raw), but ONLY when the isotropy test statistically flags it -- a
+        # difference consistent with zero is left out so clean objects aren't inflated by its noise.
+        site_db = bond_db = None
+        for key, pR, pD, which in [("isotropy", raw_pR, raw_pD, "site"),
+                                   ("isotropy_bond", raw_bond_pR, raw_bond_pD, "bond")]:
             if pR is not None and pD is not None:
                 try:
                     d_inf, d_ci, ok = isotropy_test(valid, pR, pD, L_min=lmin)
                     out[key] = {"d_inf": d_inf, "d_ci": d_ci, "isotropic": bool(ok)}
+                    if not ok:
+                        if which == "site": site_db = d_inf
+                        else:               bond_db = d_inf
                 except Exception:
                     pass
-        if raw_smax is not None:
-            try:
-                out["exponents"] = fit_exponents(valid, raw_smax)
-            except Exception:
-                pass
-        # d_f from the intersection-onset s_max: the other end of the onset-definition bracket
-        if raw_smax_inter is not None and all(s is not None for s in raw_smax_inter):
-            try:
-                out["exponents_inter"] = fit_exponents(valid, raw_smax_inter)
-            except Exception:
-                pass
-        # bond d_f (union onset, + its intersection bracket): the site/bond universality cross-check
-        if raw_bond_smax is not None and all(s is not None for s in raw_bond_smax):
-            try:
-                out["exponents_bond"] = fit_exponents(valid, raw_bond_smax)
-            except Exception:
-                pass
-        if raw_bond_smax_inter is not None and all(s is not None for s in raw_bond_smax_inter):
-            try:
-                out["exponents_bond_inter"] = fit_exponents(valid, raw_bond_smax_inter)
-            except Exception:
-                pass
+        out["site"] = extrapolate_pc_raw(valid, rSI, rSU, dir_bias=site_db)
+        if rBI and rBU and rBI[0] is not None:
+            out["bond"] = extrapolate_pc_raw(valid, rBI, rBU, dir_bias=bond_db)
     return out
 
 
@@ -457,7 +444,7 @@ def save_result(result, member, kind, seed, T, name=None, out_dir=RESULTS_DIR):
         ts = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         stem = f"gui_{member.lower()}_{kind}_{ts}"
     path = os.path.join(out_dir, stem + ".npz")
-    # One file per run: the direction-bias (pR/pD) and d_f (s_union/s_inter) arrays are now folded into
+    # One file per run: the direction-bias (pR/pD) and largest-cluster (s_union/s_inter) arrays are now folded into
     # PercolationResults instead of separate _iso.npz / _exp.npz companions.
     PercolationResults(tiling_type=f"{member}_{kind}", seed=int(seed), trials=int(T),
                        L_values=result["L"], raw_SI=result["raw_SI"], raw_SU=result["raw_SU"],
@@ -490,7 +477,7 @@ def list_saved(out_dir=None):
 
 def load_saved(fname, out_dir=None):
     """Load a saved .npz into the same result dict the live runs produce, so every plot/metric works
-    identically. The direction-bias and d_f arrays now live inside the file; for OLDER runs that kept
+    identically. The direction-bias and largest-cluster arrays now live inside the file; for OLDER runs that kept
     them in _iso.npz / _exp.npz sidecars we still read those. Returns (result, meta). Searches
     paper_results/npz/ (or just out_dir if given)."""
     from engine.results import PercolationResults

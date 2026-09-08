@@ -3,7 +3,7 @@ import numpy as np
 
 # Container for one run's raw per-trial data + metadata, with lossless npz save/load (one key per L).
 # The published p_c comes from the raw crossing arrays (raw_SI/SU/BI/BU) via extrapolate_pc_raw; the
-# direction-bias (pR/pD) and d_f (s_union/s_inter) arrays are OPTIONAL companions that now live IN this
+# direction-bias (pR/pD) and largest-cluster (s_union/s_inter) arrays are OPTIONAL companions that now live IN this
 # one file rather than in separate _iso.npz / _exp.npz sidecars (older runs kept them outside; load()
 # reads them here, and gui_backend still falls back to the old sidecars for those older files).
 
@@ -33,7 +33,7 @@ class PercolationResults:
         raw_pD=None,
         raw_bond_pR=None,
         raw_bond_pD=None,
-        # d_f incipient-cluster sizes, union/intersection onset, site & bond (was the _exp.npz companion)
+        # largest-cluster (incipient-cluster) sizes, union/intersection onset, site & bond -- archived observable (was the _exp.npz companion)
         raw_smax=None,
         raw_smax_inter=None,
         raw_bond_smax=None,
@@ -98,7 +98,7 @@ class PercolationResults:
                 arrays[f"raw_BI_{i}"] = bi
                 arrays[f"raw_BU_{i}"] = bu
 
-        # optional channels (direction-bias + d_f) -- only written when present
+        # optional channels (direction-bias + largest-cluster) -- only written when present
         for prefix, attr in self._OPT:
             data = getattr(self, attr)
             if data is not None:

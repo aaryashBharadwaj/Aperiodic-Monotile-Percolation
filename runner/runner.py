@@ -56,8 +56,9 @@ def main():
     ap.add_argument("--jobs-dir", default=None, help="(accepted for GUI compatibility; unused)")
     ap.add_argument("--name", default="", help="output file name (default auto from parameters)")
     ap.add_argument("--exponents", action="store_true",
-                    help="also run the largest-cluster pass (records s_max/chi/histogram -> d_f, "
-                         "gamma/nu, tau). Adds an extra sweep + O(N) snapshot per size (~+30%% time).")
+                    help="also record the largest-cluster (incipient-cluster) size per trial -- an "
+                         "ARCHIVED raw observable (d_f is NOT computed; it is boundary-limited on open "
+                         "patches). Adds an extra sweep + O(N) snapshot per size (~+30%% time).")
     ap.add_argument("--threads", type=int, default=0, metavar="N",
                     help="number of trials to run concurrently (the parallel dimension is over "
                          "independent trials, on nogil kernels -> real multi-core). 0 = auto "
@@ -106,7 +107,7 @@ def main():
             "result_file": result_file, "error": error, "name": args.name})
 
     # Accumulators (+ resume from a matching checkpoint if one exists).
-    # rPR/rPD site direction-bias crossings; rBPR/rBPD bond; rSM the largest-cluster sizes (d_f).
+    # rPR/rPD site direction-bias crossings; rBPR/rBPD bond; rSM the largest-cluster sizes (archived observable).
     valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, rSMi, rBSM, rBSMi, skipped = \
         ([] for _ in range(14))
     start_i = 0
@@ -136,8 +137,8 @@ def main():
 
     # The job id doesn't distinguish an --exponents run from a plain one, so the same params can resume
     # a checkpoint written WITHOUT the largest-cluster pass. That checkpoint has no per-size s_max, so the
-    # d_f accumulators would be short by start_i entries (and fit_exponents would then silently drop d_f).
-    # If we want exponents but the resumed accumulators don't line up with the sizes, restart clean.
+    # cluster-size accumulators would be short by start_i entries (misaligned with the sizes).
+    # If we want the cluster-size pass but the resumed accumulators don't line up with the sizes, restart clean.
     if args.exponents and len(rSM) != len(valid):
         start_i = 0
         valid, rSI, rSU, rBI, rBU, rPR, rPD, rBPR, rBPD, rSM, rSMi, rBSM, rBSMi, skipped = \

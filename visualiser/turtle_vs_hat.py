@@ -48,8 +48,8 @@ def main():
     hl = {idx: cmap(k % 10) for k, idx in enumerate(picks)}
 
     fig, axes = plt.subplots(1, 2, figsize=(13.5, 6.6))
-    for ax, polys, title in [(axes[0], hat, r"Hat  $\mathrm{Tile}(1,\sqrt{3})$"),
-                             (axes[1], tur, r"Turtle  $\mathrm{Tile}(\sqrt{3},1)$")]:
+    for ax, polys, title in [(axes[0], hat, r"Hat $\mathrm{Tile}(1,\sqrt{3})$"),
+                             (axes[1], tur, r"Turtle $\mathrm{Tile}(\sqrt{3},1)$")]:
         base = [polys[i] for i in keep if i not in hl]
         ax.add_collection(PolyCollection(base, facecolors="#f2f2f2", edgecolors="#333333", linewidths=0.6))
         for idx, col in hl.items():
@@ -61,9 +61,9 @@ def main():
         ax.set_aspect("equal"); ax.axis("off")
         ax.set_title(title, fontsize=15)
 
-    fig.suptitle("Same tiling, edge lengths swapped  →  identical graph, identical $p_c$",
-                 fontsize=13, y=0.98)
-    fig.text(0.5, 0.02, "matched colours = the same tile in both tilings (tile $i \\leftrightarrow$ tile $i$)",
+    fig.suptitle("The Turtle and Hat are equivalent tilings with only the edge lengths swapped, "
+                 "so the graph and $p_c$ are identical.", fontsize=13, y=0.98)
+    fig.text(0.5, 0.02, "matched colours correspond to equivalent tiles in both tilings",
              ha="center", fontsize=10, color="#555555")
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     import os

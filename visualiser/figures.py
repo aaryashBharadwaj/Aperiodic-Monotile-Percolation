@@ -162,18 +162,26 @@ def _means_IUA(raw_I, raw_U):
     return tuple(np.array(v) for v in (mI, sI, mU, sU, mA, sA))
 
 
-def fss_figure(result):
-    """Finite-size-scaling plot showing ALL THREE estimators -- Intersection, Union, Average -- vs
-    L^(-1/nu), each with its data, its WLS fit line and its L->inf intercept. This is the CLI
-    plot_extrapolation_IU view: watching I and U squeeze toward the SAME intercept as L->0^+ is the
-    sanity check -- if the two don't converge, the crossing/extrapolation is untrustworthy. Site and
-    bond get their own panel. Returns a Figure."""
+def _line_fit(x, y, s):
+    """Weighted least-squares (intercept, slope) of y vs x -- used to draw each estimator's FSS line
+    over the displayed scaling region. Same weighting as the reported extrapolation."""
+    x = np.asarray(x); y = np.asarray(y); w = 1.0 / np.asarray(s) ** 2
+    S = w.sum(); Sx = (w * x).sum(); Sxx = (w * x * x).sum(); Sy = (w * y).sum(); Sxy = (w * x * y).sum()
+    D = S * Sxx - Sx * Sx
+    return (Sxx * Sy - Sx * Sxy) / D, (S * Sxy - Sx * Sy) / D
+
+
+def fss_figure(result, title=None):
+    """Finite-size-scaling extrapolation on the SCALING REGION (L >= the average's cutoff) -- the points
+    that determine p_c. The classic three-estimator view: Intersection (high), Union (low) and their
+    Average each get a WLS line and L->inf intercept, and the three squeeze onto a common p_c (the
+    convergence check). Only post-cutoff points are shown; the discarded small-L points (which carry the
+    corrections to scaling) are shown separately by `convergence_figure(mark_cutoff=True)`, which plots
+    the full range with the discarded region marked. Site and bond get their own panel. `title`, if given,
+    is shown at the top identifying which tiling/graph the figure is for."""
     L = np.asarray(result["L"], dtype=float)
     x = L ** (-1.0 / NU)
     xs = np.linspace(0, x.max() * 1.02, 100)
-    STYLES = [("Intersection", "I", "#1f77b4", "o"),
-              ("Union",        "U", "#d62728", "s"),
-              ("Average",      "A", "#2ca02c", "^")]
     channels = [("Site", result["raw_SI"], result["raw_SU"], result["site"])]
     if result.get("bond") is not None:
         channels.append(("Bond", result["raw_BI"], result["raw_BU"], result["bond"]))
@@ -181,102 +189,82 @@ def fss_figure(result):
     fig, axes = plt.subplots(1, len(channels), figsize=(6.2 * len(channels), 5), squeeze=False)
     for ax, (name, rI, rU, res) in zip(axes[0], channels):
         mI, sI, mU, sU, mA, sA = _means_IUA(rI, rU)
-        series = {"I": (mI, sI), "U": (mU, sU), "A": (mA, sA)}
-        for label, key, color, marker in STYLES:
+        series = {"I": (np.asarray(mI), np.asarray(sI)),
+                  "U": (np.asarray(mU), np.asarray(sU)),
+                  "A": (np.asarray(mA), np.asarray(sA))}
+        # Show only the SCALING REGION (L >= the average's cutoff). All three estimators get a WLS line
+        # fit over the displayed points and drawn to the L->inf intercept: Intersection (high), Union
+        # (low) and Average squeeze onto a common p_c. The discarded small-L points are the subject of
+        # convergence_figure(mark_cutoff=True), not shown here.
+        cutoff = res["A"].get("cutoff_L", float(L.min()))
+        kept = L >= cutoff
+        xk = x[kept]
+        xline = np.linspace(0, xk.max() * 1.02, 100)
+        for label, key, color, marker in [("Intersection", "I", "#1f77b4", "o"),
+                                          ("Union",        "U", "#d62728", "s"),
+                                          ("Average",      "A", "#2ca02c", "^")]:
             m, s = series[key]
-            ax.errorbar(x, m, yerr=s, fmt=marker, color=color, ms=6, capsize=3, alpha=0.9)
-            pc, slope = res[key]["pc"], res[key]["A"]
-            ax.plot(xs, slope * xs + pc, "--", color=color, lw=1.4, label=f"{label}: {pc:.4f}")
-            ax.plot(0, pc, "X", color=color, ms=12, mec="black", mew=0.7, zorder=5)
+            mk, sk = m[kept], s[kept]
+            pc, slope = _line_fit(xk, mk, sk)
+            ax.errorbar(xk, mk, yerr=sk, fmt=marker, color=color, ms=5.5, capsize=3, alpha=0.9,
+                        zorder=4, label=label)
+            ax.plot(xline, slope * xline + pc, "-", color=color, lw=1.4, zorder=3)
+        # One reported intercept: the three estimators agree to the quoted precision, so a per-estimator
+        # number would be three identical values -- show the single reported p_c (the average) instead.
+        ax.plot(0, res["A"]["pc"], "X", color="#2ca02c", ms=13, mec="black", mew=0.8, zorder=6,
+                label=f"$p_c$ = {res['A']['pc']:.4f}")
         ax.set_title(f"{name} percolation")
         ax.set_xlabel(r"$L^{-1/\nu}$   ($\nu=4/3$,  $L\to\infty$ at 0)")
         ax.set_ylabel(r"crossing $p_c$")
-        ax.set_xlim(left=-0.004)
+        ax.set_xlim(-xk.max() * 0.05, xk.max() * 1.05)         # zoom to the scaling region shown
         ax.grid(True, ls="--", alpha=0.4)
-        ax.legend(loc="best", fontsize=9, title="I & U should meet at 0")
-    fig.tight_layout()
-    return fig
-
-
-def convergence_figure(result):
-    """Per-size crossing estimate vs L (linear axis), Intersection and Union criteria for site and
-    bond -- the CLI plot_percolation_stats_IU view. As L grows I (which comes in high) and U (which
-    comes in low) squeeze toward each other onto the same p_c; that visible closing of the bracket is
-    the 'you can see it converge' sanity check. The AVERAGE is deliberately NOT drawn here -- it's the
-    midpoint of the two, so it looks flat and hides the convergence (that's the extrapolation plot's
-    job). Error bars are the crossing-distribution sample std (the width that narrows as ~L^-3/4)."""
-    L = np.asarray(result["L"], dtype=float)
-    series = [("Site I", result["raw_SI"], "blue", "o"),
-              ("Site U", result["raw_SU"], "deepskyblue", "s")]
-    if result.get("bond") is not None:
-        series += [("Bond I", result["raw_BI"], "red", "^"),
-                   ("Bond U", result["raw_BU"], "orange", "x")]
-    fig, ax = plt.subplots(figsize=(9, 5.5))
-    for label, raw, color, marker in series:
-        m = np.array([np.mean(r) for r in raw])
-        w = np.array([np.std(r, ddof=1) for r in raw])   # distribution width, not standard error
-        ax.errorbar(L, m, yerr=w, fmt=marker + "-", color=color, ms=5, lw=1.0, capsize=3, label=label)
-    ax.set_title("Per-size estimate vs L  (I & U criteria)")
-    ax.set_xlabel(r"linear system size  $L$")
-    ax.set_ylabel(r"crossing $p_c(L)$")
-    ax.grid(True, ls="--", alpha=0.4)
-    ax.legend(loc="best", fontsize=9)
-    fig.tight_layout()
-    return fig
-
-
-def df_convergence_figure(result, hmax=0.02):
-    """Effective d_f vs L_min -- the assumption-free convergence test. Refit the slope of
-    <S_max> ~ L^{d_f} over sizes L >= L_min for a sweep of cutoffs, WITHOUT imposing any corrections-to-
-    scaling form. If the data belong to the 2D percolation class, the raw effective exponent drifts on
-    its own toward 91/48 as the small-L points (which carry the finite-size corrections) are dropped;
-    a fixed reference at 91/48 makes that visible. The cutoff is VALUE-BLIND: a point stays solid only
-    while its 95% bootstrap CI half-width is under `hmax` -- fewer sizes remain as L_min rises, so the
-    error grows and the volatile tail is excluded on the error budget, not on where the value sits.
-    The least-biased usable point (largest L_min still under the ceiling) is annotated as the estimate.
-    Returns a Figure, or None if the run has no s_max data / too few sizes."""
-    smax = result.get("raw_smax")
-    if smax is None or len(smax) < 6:
-        return None
-    from engine.analysis import fit_exponents
-    L = np.asarray(result["L"], float)
-    smax = [np.asarray(s, float) for s in smax]
-    o = np.argsort(L); L = L[o]; smax = [smax[i] for i in o]
-    Lmins = [float(m) for m in L if (L >= m).sum() >= 5]
-    xs, ys, half = [], [], []
-    for m in Lmins:
-        keep = L >= m
-        e = fit_exponents(L[keep], [s for s, k in zip(smax, keep) if k], B=300)
-        xs.append(m); ys.append(e["d_f"]); half.append((e["d_f_ci"][1] - e["d_f_ci"][0]) / 2.0)
-    xs, ys, half = np.array(xs), np.array(ys), np.array(half)
-    usable = half <= hmax
-    kmax = int(np.where(usable)[0].max()) if usable.any() else -1
-    EX = 91.0 / 48.0
-    C = "#1f5fa8"
-    fig, ax = plt.subplots(figsize=(7.5, 5))
-    ax.axhline(EX, ls="--", color="#222", lw=1.5, zorder=5, label=f"91/48 = {EX:.4f}  (2D percolation)")
-    ax.plot(xs, ys, "-", color=C, lw=1, alpha=0.3)                          # full curve, faint
-    if kmax >= 0:
-        ax.fill_between(xs[:kmax + 1], ys[:kmax + 1] - half[:kmax + 1], ys[:kmax + 1] + half[:kmax + 1],
-                        color=C, alpha=0.15)
-        ax.plot(xs[:kmax + 1], ys[:kmax + 1], "-o", color=C, ms=4, lw=1.6,
-                label=f"usable  (95% CI half-width ≤ {hmax:g})")
-        ax.plot(xs[kmax + 1:], ys[kmax + 1:], "o", color=C, ms=3, mfc="white", alpha=0.5,
-                label="excluded  (too few sizes → CI too wide)")
-        ax.axvline(xs[kmax], color=C, ls=":", lw=1.1, alpha=0.7)
-        ax.text(0.03, 0.05, f"estimate:  $d_f$ = {ys[kmax]:.3f} ± {half[kmax]:.3f}\n"
-                            f"(largest usable $L_{{\\min}}$ = {xs[kmax]:g})",
-                transform=ax.transAxes, va="bottom", fontsize=9,
-                bbox=dict(boxstyle="round", fc="white", ec="#ccc", alpha=0.9))
+        ax.legend(loc="best", fontsize=9, title=f"cutoff at L ≥ {int(round(cutoff))}")
+    if title:
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
+        fig.suptitle(title, fontsize=14, y=0.965)
     else:
-        ax.plot(xs, ys, "-o", color=C, ms=4)
-    ax.set_ylim(min(1.70, float(ys.min()) - 0.02), 1.96)
-    ax.set_xlabel(r"$L_{\min}$   (fit uses sizes $L \geq L_{\min}$ up to $L_{\max}$)")
-    ax.set_ylabel(r"effective $d_f$  (slope of $\ln\langle S_{\max}\rangle$ vs $\ln L$)")
-    ax.set_title(r"$d_f$ convergence — no corrections-to-scaling imposed")
-    ax.grid(alpha=0.3)
-    ax.legend(loc="lower right", fontsize=8)
-    fig.tight_layout()
+        fig.tight_layout()
+    return fig
+
+
+def convergence_figure(result, title=None):
+    """Per-size crossing estimate p_c(L) vs L (linear axis), FULL range, Site and Bond in their own panel.
+    The Intersection (comes in high) and Union (comes in low) estimators bracket p_c: the shaded band
+    between them narrows as L grows -- the 'you can see it converge' view -- and its edges carry faint
+    per-size dots. The reported p_c is a dashed horizontal line; a dashed vertical line marks the fit
+    cutoff (points left of it, L < cutoff, are discarded from the extrapolation). `title`, if given, labels
+    the tiling/graph at the top (matches fss_figure)."""
+    import matplotlib.patches as mpatches
+    from matplotlib.lines import Line2D
+    L = np.asarray(result["L"], dtype=float)
+    BAND = "#a9cbe8"; EDGE = "#2c6e9c"; DOT = "#26507d"; PC = "#c0392b"; CUT = "#2e8b57"
+    channels = [("Site percolation", result["raw_SI"], result["raw_SU"], result.get("site"))]
+    if result.get("bond") is not None:
+        channels.append(("Bond percolation", result["raw_BI"], result["raw_BU"], result.get("bond")))
+
+    fig, axes = plt.subplots(1, len(channels), figsize=(6.5 * len(channels), 5.3), squeeze=False)
+    for ax, (name, rI, rU, chres) in zip(axes[0], channels):
+        mI, sI, mU, sU, mA, sA = [np.asarray(v) for v in _means_IUA(rI, rU)]
+        ax.fill_between(L, mI, mU, color=BAND, alpha=0.6, lw=0, zorder=1)               # I-U bracket
+        ax.plot(L, mI, color=EDGE, lw=1.2, zorder=3); ax.plot(L, mU, color=EDGE, lw=1.2, zorder=3)
+        ax.plot(L, mI, "o", color=DOT, ms=1.7, alpha=0.5, zorder=4)
+        ax.plot(L, mU, "o", color=DOT, ms=1.7, alpha=0.5, zorder=4)
+        handles = [mpatches.Patch(color=BAND, alpha=0.7, label="Intersection–Union bracket")]
+        if chres is not None:
+            pc = chres["A"]["pc"]; cut = chres["A"].get("cutoff_L", float(L.min()))
+            ax.axhline(pc, color=PC, ls=(0, (6, 4)), lw=1.5, zorder=2)
+            ax.axvline(cut, color=CUT, ls=(0, (4, 3)), lw=1.5, zorder=2)                # fit cutoff
+            handles += [Line2D([0], [0], color=PC, lw=1.5, ls="--", label=f"$p_c$ = {pc:.4f}"),
+                        Line2D([0], [0], color=CUT, lw=1.5, ls="--", label=f"cutoff ($L = {int(round(cut))}$)")]
+        ax.set_title(name, fontsize=12, pad=6)
+        ax.set_xlabel("system size  $L$"); ax.set_ylabel("crossing  $p_c(L)$")
+        ax.grid(axis="y", ls=":", alpha=0.35); ax.set_xlim(L.min() - 15, L.max() + 15)
+        for sp in ("top", "right"): ax.spines[sp].set_visible(False)
+        ax.legend(handles=handles, loc="upper right", fontsize=9.5, framealpha=0.9)
+    if title:
+        fig.tight_layout(rect=[0, 0, 1, 0.94]); fig.suptitle(title, fontsize=14, y=0.965)
+    else:
+        fig.tight_layout()
     return fig
 
 
