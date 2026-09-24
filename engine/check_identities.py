@@ -1,81 +1,66 @@
-"""Run the isomorphism/identity checker over the monotile family and print which duals are KNOWN
-lattices (so they need no Monte-Carlo run) and which are genuinely novel aperiodic graphs.
+"""Prove the graph identities that let certain duals be quoted from a known value instead of Monte-Carlo
+run. Every proof is an EXPLICIT node-to-node mapping -- no VF2, no NetworkX, no Weisfeiler-Leman hash.
 
-    python -m engine.check_identities            # default small patches (fast, ~1-2 min)
+    python -m engine.check_identities            # default small patches (fast)
     python -m engine.check_identities --patch 4  # bigger interior, slower
 
-Verdicts:
-  * comet-periodic dual  -> triangular
-  * chevron-periodic dual-> square
-  * Tile(1,1) dual       -> triangular      } proven lattices: drop from the run, cite the exact value
-  * comet-aperiodic dual == hat dual         (isomorphic: comet-ap IS the hat folded, so all graph
-                                              invariants match -- V, E, degree/triangle/WL histograms)
-  * hat / spectre / chevron-aperiodic duals -> aperiodic/novel (must be measured; kept in the batch)
+The five identities:
+  * comet-periodic dual   -> triangular  (developed bijection phi, every interior edge verified)
+  * chevron-periodic dual -> square      "
+  * Tile(1,1) dual        -> triangular  "   -> cite the exact lattice value, no run
+  * comet-aperiodic dual  == hat dual    (bit-identical: same graph, phi = identity -> same p_c)
+  * turtle == hat          (bit-identical)
+The hat / spectre / chevron-aperiodic duals have NO such identity -- they are the paper's measured
+aperiodic objects, so this checker makes no claim about them.
 """
 import argparse
-import numpy as np
 import interface.gui_backend as gb
 from engine import isomorphism as iso
 
 
-def _graph(tiling, kind, patch, a=None, b=None):
-    kw = {} if a is None else {"a": a, "b": b}
-    bundle = gb.build_graph(tiling, kind, patch, **kw)
-    return bundle["coords"], bundle["neighbors"]
+def _graph(tiling, kind, patch):
+    b = gb.build_graph(tiling, kind, patch)
+    return b["coords"], b["neighbors"]
 
 
-def classify(name, tiling, patch):
+def periodic(name, tiling, lattice, patch):
     coords, nbrs = _graph(tiling, "Dual", patch)
-    lat, sig = iso.classify_lattice(coords, nbrs)
-    dom = sig["dominant"]; unif = sig["uniformity"]
-    print(f"  {name:26s} dual: V={len(coords):>6}  interior={sig['n_interior']:>6}  "
-          f"dominant(deg,tri)={str(dom):>8}  uniformity={unif:5.1%}  ->  {lat.upper()}")
-    return lat
+    ok, st = iso.is_lattice(coords, nbrs, lattice)
+    print(f"  {name:26s} dual -> {lattice:10s}: V={st['V']:>6}  interior edges {st['edges_preserved']}/{st['edges_total']}"
+          f"  injective={st['collisions'] == 0}  ->  {'PROVEN' if ok else 'NOT ' + lattice}")
+    return ok
+
+
+def bitid(name, na, nb):
+    ok, d = iso.bit_identical(na, nb)
+    print(f"  {name:34s} V={d.get('V', '?')}  ->  {'IDENTICAL (same p_c by construction)' if ok else 'DIFFER ' + str(d)}")
+    return ok
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--patch", type=int, default=3, help="hat/spectre metatile depth (bigger = larger interior)")
+    ap.add_argument("--patch", type=int, default=3, help="hat/spectre metatile depth")
     ap.add_argument("--cells", type=int, default=120, help="periodic tiling cell count")
     args = ap.parse_args()
 
-    print("=" * 96)
-    print("KNOWN-LATTICE DUALS  (interior degree,triangle signature == a classic lattice -> no MC run needed)")
-    print("=" * 96)
-    classify("Comet periodic",   "Comet",            args.cells)
-    classify("Chevron periodic", "Chevron",          args.cells)
-    classify("Tile(1,1) periodic", "Tile(1,1) periodic", max(200, args.cells))
+    print("=" * 100)
+    print("PERIODIC DUALS -> KNOWN LATTICE   (explicit developed bijection phi, every interior edge verified)")
+    print("=" * 100)
+    periodic("Comet periodic",    "Comet",              "triangular", args.cells)
+    periodic("Chevron periodic",  "Chevron",            "square",     args.cells)
+    periodic("Tile(1,1) periodic", "Tile(1,1) periodic", "triangular", max(200, args.cells))
 
-    print("\n" + "=" * 96)
-    print("IDENTITY  (comet-aperiodic is the hat FOLDED: same combinatorics, tiles reshaped -> compare up")
-    print("           to relabelling, since folding moves the physical coordinates)")
-    print("=" * 96)
-    ca, na = _graph("Comet aperiodic", "Dual", args.patch)
-    hc, hn = _graph("Hat",             "Dual", args.patch)
-    ok, d = iso.isomorphic(hn, na)
-    print(f"  comet-aperiodic dual  vs  hat dual :  V {d['V']}  E {d['E']}   [{d['method']}]")
-    print(f"     -> {'ISOMORPHIC (same p_c by construction)' if ok else 'NOT isomorphic -- investigate'}")
-
-    print("\n" + "=" * 96)
-    print("TURTLE == HAT  (the general maker used on the one member that needs it: Tile(sqrt3,1) is the")
-    print("               hat re-embedded with its two edge lengths swapped -> same graph, same p_c)")
-    print("=" * 96)
+    print("\n" + "=" * 100)
+    print("APERIODIC GRAPH IDENTITY   (bit-identical: same graph, phi = identity)")
+    print("=" * 100)
+    _, na = _graph("Comet aperiodic", "Dual", args.patch)
+    _, hn = _graph("Hat", "Dual", args.patch)
+    bitid("comet-aperiodic dual == hat dual", hn, na)
     from generators.aperiodic_collapse import turtle_graph
     for kind in ("direct", "dual"):
-        hc, hn = _graph("Hat", kind.capitalize(), args.patch)
-        tc, tn, _ = turtle_graph(kind, args.patch)
-        ok, d = iso.isomorphic(hn, tn)
-        print(f"  turtle {kind:6s} vs hat {kind:6s}:  V {d['V']}  E {d['E']}   [{d['method']}]  ->  "
-              f"{'ISOMORPHIC' if ok else 'MISMATCH -- investigate'}")
-
-    print("\n" + "=" * 96)
-    print("NOVEL APERIODIC DUALS  (interior is NOT a single-lattice signature -> genuinely new, must measure)")
-    print("=" * 96)
-    for name, tiling in [("Hat", "Hat"), ("Spectre", "Spectre"), ("Chevron aperiodic", "Chevron aperiodic")]:
-        classify(name, tiling, args.patch)
-
-    print("\nnote: 'uniformity' = fraction of interior nodes on the dominant (deg,tri) pair; a periodic")
-    print("      dual is ~100% uniform, an aperiodic dual spreads across several pairs.")
+        _, hn = _graph("Hat", kind.capitalize(), args.patch)
+        _, tn, _ = turtle_graph(kind, args.patch)
+        bitid(f"turtle {kind} == hat {kind}", hn, tn)
 
 
 if __name__ == "__main__":

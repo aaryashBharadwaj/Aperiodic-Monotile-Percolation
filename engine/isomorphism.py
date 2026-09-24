@@ -1,120 +1,109 @@
-"""Isomorphism / lattice-identity checker.
+"""Isomorphism / lattice-identity checker -- EXPLICIT constructions only. No VF2, no NetworkX, no
+Weisfeiler-Leman hash: the certificate is always an explicit node-to-node mapping phi that we write down
+and verify edge-by-edge. Each identity lets us replace a Monte-Carlo p_c run with a proof a referee reads.
 
-Two jobs, both of which let us REPLACE a Monte-Carlo p_c run with a proof:
+  (A) GRAPH IDENTITY (bit-identical, phi = identity).  Two tilings that emit the SAME graph with the SAME
+      node ordering percolate identically. Canonicalise each node's neighbour list (sort) and compare the
+      arrays. Whole-graph certificate. Used for  comet-aperiodic dual == hat dual  and  turtle == hat.
 
-  (A) GRAPH ISOMORPHISM -- two tilings that produce the same graph (up to relabelling) percolate
-      identically, so one run covers both. We delegate this to NetworkX: `nx.is_isomorphic` (the VF2
-      algorithm) is an EXACT certificate; for very large graphs it falls back to the Weisfeiler-Leman
-      hash (fast, strong evidence). This is how we show comet-aperiodic dual == hat dual and turtle == hat.
+  (B) DEVELOP ONTO A KNOWN LATTICE.  A periodic dual whose interior is a regular lattice is certified by
+      CONSTRUCTING an explicit bijection  phi: node -> integer lattice coordinate  and checking phi maps
+      every interior edge onto a lattice neighbour offset. phi is built by developing the planar rotation
+      system (the "grow from any node" construction): order each node's neighbours CCW by the drawn angle,
+      seed one node at (0,0) with its link aligned to the lattice's offsets, then walk edge-by-edge -- each
+      step places a node and fixes its frame from where its already-placed neighbour sits in its own CCW
+      order. Used for  comet-periodic dual -> triangular,  tile11 dual -> triangular,  chevron-periodic
+      dual -> square.  (This is the composition of the hand-built tile-adjacency <-> herringbone map with
+      herringbone <-> triangular, realised in one pass; the herringbone's two vertex orbits are handled
+      automatically because the walk assigns coordinates combinatorially.)
 
-  (B) LOCAL LATTICE CLASSIFICATION -- a finite patch of a periodic dual can't be *globally* isomorphic to
-      an infinite lattice (its boundary differs), so instead we read the boundary-FREE interior signature:
-      for every node far enough from the patch edge that its whole local neighbourhood is present, record
-      (degree, triangles-through-node). A vertex-transitive lattice gives ONE such pair for the whole
-      interior -- triangular=(6,6), square=(4,0), honeycomb=(3,0). A single interior pair that matches a
-      reference lattice IS that lattice locally; a spread of pairs is an aperiodic (novel) graph.
-
-The heavy graph theory (isomorphism, WL, triangle counting) is NetworkX; the code here is only the thin
-adjacency->graph conversion and the geometric interior classifier. Angles/edge lengths never enter --
-percolation ignores them.
+Finite-patch BOUNDARY nodes have truncated neighbourhoods (degree < lattice degree); they are placed but
+not required and not propagated, since the infinite tiling has no boundary. Only full-degree interior nodes
+are verified. Angles/edge lengths enter ONLY to orient the seed and read the rotation system -- percolation
+ignores geometry, and the certificate itself is the integer map phi plus the exact edge check.
 """
+from collections import deque
 import numpy as np
-import networkx as nx
+
+# Target-lattice neighbour offsets, listed CCW. Each offset's negation sits d/2 further round the list --
+# the develop step relies on this (offsets[(j + d//2) % d] == -offsets[j]).
+TRIANGULAR = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)]   # degree 6, hexagonal vertex link
+SQUARE     = [(1, 0), (0, 1), (-1, 0), (0, -1)]                     # degree 4
+REFERENCE = {"triangular": TRIANGULAR, "square": SQUARE}
 
 
-# --------------------------------------------------------------------------- graph isomorphism (NetworkX)
-def to_networkx(neighbors):
-    """Adjacency list (list of int arrays) -> undirected nx.Graph on nodes 0..n-1. Each undirected edge
-    is added once (the `i < j` guard)."""
-    G = nx.Graph()
-    G.add_nodes_from(range(len(neighbors)))
-    G.add_edges_from((i, int(j)) for i, row in enumerate(neighbors) for j in row if i < int(j))
-    return G
+# --------------------------------------------------------------------------- (A) bit-identical identity
+def bit_identical(neighbors_a, neighbors_b):
+    """Are the two graphs identical up to neighbour-list order (phi = the identity map)? Sort each node's
+    neighbour list and compare. Returns (bool, detail). This is the whole-graph certificate for the
+    aperiodic identities (comet-aperiodic dual == hat dual, turtle == hat)."""
+    if len(neighbors_a) != len(neighbors_b):
+        return False, {"reason": "vertex-count", "a": len(neighbors_a), "b": len(neighbors_b)}
+    for i, (ra, rb) in enumerate(zip(neighbors_a, neighbors_b)):
+        a = np.sort(np.asarray(ra, dtype=np.int64))
+        b = np.sort(np.asarray(rb, dtype=np.int64))
+        if a.shape != b.shape or not np.array_equal(a, b):
+            return False, {"reason": "adjacency", "node": i}
+    return True, {"phi": "identity", "V": len(neighbors_a)}
 
 
-def graph_hash(neighbors, iterations=4):
-    """NetworkX Weisfeiler-Leman graph hash: the standard label-independent fingerprint, fast at any size."""
-    return nx.weisfeiler_lehman_graph_hash(to_networkx(neighbors), iterations=iterations)
+# --------------------------------------------------------------------------- (B) develop onto a lattice
+def develop_to_lattice(coords, neighbors, offsets):
+    """CONSTRUCT phi: node -> integer lattice coordinate by developing the planar rotation system, then
+    verify phi preserves every interior edge. `offsets` = the target lattice's CCW neighbour offsets
+    (TRIANGULAR or SQUARE). Returns (is_that_lattice, phi, stats).
+
+    is_that_lattice is True iff phi is injective on the interior AND every interior (full-degree) edge maps
+    to a lattice offset. phi is the explicit certificate; stats reports edges_preserved / edges_total.
+    Pure numpy -- no VF2, no NetworkX, no hashing."""
+    d = len(offsets); offset_set = set(offsets)
+    adj = [list(map(int, r)) for r in neighbors]
+    deg = np.array([len(r) for r in adj])
+    X = np.asarray(coords, float)
+    # rotation system: each node's neighbours ordered CCW by the drawn angle
+    cyc = [[adj[n][k] for k in np.argsort(np.arctan2(X[adj[n]][:, 1] - X[n, 1],
+            X[adj[n]][:, 0] - X[n, 0]))] if adj[n] else [] for n in range(len(adj))]
+    seeds = [int(n) for n in np.argsort(((X - X.mean(0)) ** 2).sum(1)) if deg[n] == d]
+    if not seeds:
+        return False, {}, {"reason": "no full-degree node", "V": len(adj)}
+    c0 = seeds[0]
+    phi = {c0: (0, 0)}; rot = {c0: 0}; Q = deque([c0])
+    while Q:
+        p = Q.popleft()
+        if len(cyc[p]) != d:
+            continue
+        for k, q in enumerate(cyc[p]):
+            off = offsets[(k + rot[p]) % d]
+            cq = (phi[p][0] + off[0], phi[p][1] + off[1])
+            if q in phi:
+                continue
+            if deg[q] != d:                         # boundary node: place, do not propagate/require
+                phi[q] = cq
+                continue
+            rot[q] = (k + rot[p] + d // 2 - cyc[q].index(p)) % d
+            phi[q] = cq
+            Q.append(q)
+    # verify injectivity on interior nodes + edge preservation
+    seen = {}; collisions = 0
+    for n, cc in phi.items():
+        if deg[n] == d and cc in seen and deg[seen[cc]] == d:
+            collisions += 1
+        seen[cc] = n
+    good = total = 0
+    for n, cc in phi.items():
+        if deg[n] != d:
+            continue
+        for m in adj[n]:
+            if m in phi and deg[m] == d:
+                total += 1
+                good += ((phi[m][0] - cc[0], phi[m][1] - cc[1]) in offset_set)
+    ok = (collisions == 0 and total > 0 and good == total)
+    return ok, phi, {"V": len(adj), "assigned": len(phi), "collisions": collisions,
+                     "edges_preserved": good, "edges_total": total}
 
 
-def isomorphic(neighbors_a, neighbors_b, exact=None):
-    """Are the two graphs isomorphic (up to relabelling)? Returns (bool, detail).
-
-    Uses NetworkX: VF2 (`nx.is_isomorphic`) is an EXACT certificate but backtracks badly on structured
-    lattice graphs (~40 s already at ~3600 nodes), so we only auto-select it for SMALL graphs (< 500 nodes,
-    e.g. self-dual validation checks). Larger graphs compare Weisfeiler-Leman hashes (fast at any size --
-    ~1 s at 20k -- strong evidence, not a certificate). Set `exact=True`/`False` to force. A vertex/edge-
-    count mismatch short-circuits to False."""
-    Ga, Gb = to_networkx(neighbors_a), to_networkx(neighbors_b)
-    sa = (Ga.number_of_nodes(), Ga.number_of_edges())
-    sb = (Gb.number_of_nodes(), Gb.number_of_edges())
-    if sa != sb:
-        return False, {"method": "size-mismatch", "a": sa, "b": sb}
-    if exact is None:
-        exact = sa[0] < 500
-    if exact:
-        ok, method = nx.is_isomorphic(Ga, Gb), "VF2 (exact)"
-    else:
-        ok, method = graph_hash(neighbors_a) == graph_hash(neighbors_b), "WL-hash (large graph)"
-    return ok, {"method": method, "V": sa[0], "E": sa[1]}
-
-
-# --------------------------------------------------------------------------- interior lattice signature
-def _median_edge_length(coords, neighbors, sample=2000):
-    coords = np.asarray(coords, float)
-    lens = []
-    step = max(1, len(neighbors) // sample)
-    for i in range(0, len(neighbors), step):
-        for j in neighbors[i]:
-            lens.append(np.hypot(*(coords[i] - coords[j])))
-    return float(np.median(lens)) if lens else 1.0
-
-
-def interior_indices(coords, neighbors, margin_edges=2.5):
-    """Nodes at least margin_edges * (median edge length) inside the bounding box. For these the full
-    local neighbourhood (and every triangle through them) is present, so their degree/triangle counts
-    are the TRUE lattice values, not boundary-truncated ones."""
-    coords = np.asarray(coords, float)
-    m = margin_edges * _median_edge_length(coords, neighbors)
-    xmn, ymn = coords.min(0); xmx, ymx = coords.max(0)
-    inside = (coords[:, 0] >= xmn + m) & (coords[:, 0] <= xmx - m) & \
-             (coords[:, 1] >= ymn + m) & (coords[:, 1] <= ymx - m)
-    return np.where(inside)[0]
-
-
-def interior_signature(coords, neighbors, margin_edges=2.5):
-    """The boundary-free fingerprint: the multiset of (degree, triangles) over interior nodes, plus the
-    single dominant pair and how uniform the interior is. Triangle counts come from NetworkX. A periodic
-    lattice -> one dominant pair covering ~all interior nodes; an aperiodic graph -> a spread."""
-    idx = interior_indices(coords, neighbors, margin_edges)
-    if len(idx) == 0:
-        return {"n_interior": 0, "dominant": None, "uniformity": 0.0, "pairs": {}}
-    tri = nx.triangles(to_networkx(neighbors))                 # {node: #triangles through it}
-    pairs = {}
-    for i in idx:
-        key = (len(neighbors[i]), int(tri[int(i)]))
-        pairs[key] = pairs.get(key, 0) + 1
-    dom = max(pairs, key=pairs.get)
-    return {"n_interior": int(len(idx)), "dominant": dom,
-            "uniformity": pairs[dom] / len(idx), "pairs": pairs}
-
-
-# reference interior signatures of the classic lattices (degree, triangles-through-node)
-REFERENCE_LATTICES = {
-    "triangular": (6, 6),
-    "square":     (4, 0),
-    "honeycomb":  (3, 0),
-}
-
-
-def classify_lattice(coords, neighbors, margin_edges=2.5, uniformity_min=0.90):
-    """Name the lattice a (dual) graph's interior locally is, or 'aperiodic/novel'. Returns
-    (name, signature_dict). A match requires the interior to be ~uniform (uniformity >= uniformity_min)
-    AND its dominant (degree, triangle) pair to equal a reference lattice's."""
-    sig = interior_signature(coords, neighbors, margin_edges)
-    if sig["dominant"] is None or sig["uniformity"] < uniformity_min:
-        return "aperiodic/novel", sig
-    for name, ref in REFERENCE_LATTICES.items():
-        if sig["dominant"] == ref:
-            return name, sig
-    return "periodic (unlisted)", sig
+def is_lattice(coords, neighbors, name):
+    """Convenience: develop the dual's interior onto REFERENCE[name] and return (bool, stats)."""
+    ok, _phi, stats = develop_to_lattice(coords, neighbors, REFERENCE[name])
+    stats["lattice"] = name
+    return ok, stats
