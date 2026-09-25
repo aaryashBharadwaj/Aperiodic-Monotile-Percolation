@@ -6,6 +6,7 @@ import matplotlib
 matplotlib.use("Agg")   # headless default; a GUI backend overrides this at import time
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from matplotlib.colors import hsv_to_rgb
 from matplotlib.collections import PolyCollection
 
 # Pure drawing (no percolation). The functions return matplotlib Figures so they are reused verbatim
@@ -54,10 +55,12 @@ def _tile_colors(polys, mode):
         maj = np.sign(np.median(a)) or 1.0
         return [_BLUE if np.sign(v) == maj else _GOLD for v in a]
     if mode == "orientation":
+        # Pastel HSV by first-edge angle: bright, soft, no dark ends (replaces the dark twilight cmap).
+        # Low saturation keeps it pastel; hue cycles with orientation so rotation classes read as colour.
         polys = [np.asarray(p) for p in polys]
         ang = np.array([math.atan2(p[1, 1] - p[0, 1], p[1, 0] - p[0, 0]) % (2 * math.pi)
                         for p in polys])
-        return [cm.twilight(t / (2 * math.pi)) for t in ang]
+        return [hsv_to_rgb((t / (2 * math.pi), 0.38, 0.95)) for t in ang]
     return None
 
 # Draw tile polygons (each an (n,2) array of outline vertices) as filled cells. Color_by in {None, 'chirality', 'orientation'}. Returns the matplotlib Figure.

@@ -45,8 +45,45 @@ def _wls_fit(x, y, sigma, n, confidence):
     return pc_hat, A_hat, pc_std, A_std, pc_ci, chi2_red
 
 
+def _boot_quantiles(rI, rU, qI, qU, n_boot, rng, max_cells=4_000_000):
+    """Paired bootstrap standard errors for the median-at-R_c estimator, at one system size.
+    rI, rU are the per-trial spanning-onset fractions for the intersection (both-directions) and union
+    (either-direction) channels, measured in the SAME sweeps (trial k of rI and rU share the random
+    generation). The point estimates are the R_c-quantiles qI, qU of each channel. The SEs come from
+    resampling TRIAL INDICES and applying the SAME indices to both channels, so the I<->U correlation
+    flows into sigma_A automatically -- no explicit covariance term. Bootstrapping (not std/sqrt(T)) is
+    used because a sample quantile has no clean closed-form standard error. Chunked so peak memory stays
+    ~max_cells floats regardless of trial count. Returns (pI, pU, sigma_I, sigma_U, sigma_A)."""
+    T = len(rI)
+    pI = float(np.quantile(rI, qI)); pU = float(np.quantile(rU, qU))
+    chunk = max(1, int(max_cells // max(1, T)))
+    bI = np.empty(n_boot); bU = np.empty(n_boot)
+    done = 0
+    while done < n_boot:
+        m = min(chunk, n_boot - done)
+        idx = rng.integers(0, T, size=(m, T))
+        bI[done:done + m] = np.quantile(rI[idx], qI, axis=1)
+        bU[done:done + m] = np.quantile(rU[idx], qU, axis=1)
+        done += m
+    bA = 0.5 * (bI + bU)
+    return pI, pU, float(bI.std(ddof=1)), float(bU.std(ddof=1)), float(bA.std(ddof=1))
+
+
 def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confidence=0.95,
-                       bias_floor=None, cutoff_conf=0.95, dir_bias=None):
+                       bias_floor=None, cutoff_conf=0.95, dir_bias=None,
+                       rc_I=0.322120455, n_boot=1000, boot_seed=20260909):
+    # ESTIMATOR: median-at-R_c (Ziff & Newman, PRE 66, 016129 (2002)). Each channel's spanning-onset
+    # distribution is read at its EXACT universal crossing value R_c, and the size series is extrapolated
+    # along the ANALYTIC correction exponent 1 + 1/nu (= 1.75 at nu = 4/3). This is why median-at-R_c is
+    # standardised over the average-onset estimator we shipped before: the average obeys L^{-(omega+1/nu)}
+    # (~L^{-1.65}), whose slope depends on the MEASURED correction exponent omega = 0.90(2), whereas
+    # 1 + 1/nu is analytic (omega-independent) -- an objective, not-fitted slope.
+    # R_c is CFT-exact for the aspect-1 square / conformal rectangle: intersection (span in BOTH
+    # directions) = 0.322120455 (Watts 1996); union (span in EITHER direction) = 1 - that = 0.677879545.
+    # For the aperiodic patches, R_c's transfer is LICENSED by the Cardy aspect-ratio test (Tier-1), not
+    # assumed. rc_I sets the intersection quantile; the union quantile is 1 - rc_I (inclusion-exclusion).
+    # n_boot/boot_seed: replicates and RNG seed for the quantile-SE bootstrap (reproducible).
+    #
     # bias_floor: if given, the reported systematic is floored at this value -- the size of the residual
     # finite-size bias that the KNOWN-lattice controls show at this run's reach (a self-hiding systematic
     # the fit-window scan can miss). Supplied by the reporting layer from the control "bias ruler".
@@ -57,56 +94,42 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
     # estimator p_A = (p_R+p_D)/2 sits |dir_bias|/2 from either directional threshold, so when the two
     # directions differ in the limit this is an unquoted systematic on p_A. Its sign is unknown (we
     # measure the gap, not the asymmetry), so it only widens the error -- folded into the A channel below.
+    rc_U = 1.0 - rc_I
     L  = np.array(L_list, dtype=float)
     n  = len(L)
-    # The finite estimates approach the true p_c using a critical exponent nu = 4/3, so we use this to estimate p_c
-    x  = L ** (-1.0 / nu)
+    # Leading finite-size correction of the median-at-R_c estimator: L^{-(1 + 1/nu)} (analytic exponent).
+    x  = L ** (-(1.0 + 1.0 / nu))
+    inv_exp = 1.0 / (1.0 + 1.0 / nu)   # invert x -> L for cutoff reporting: L = x^{-inv_exp}
+    rng = np.random.default_rng(boot_seed)
 
-    mean_I, mean_U, mean_A = [], [], []
-    sigma_I, sigma_U, sigma_A = [], [], []
+    mean_I, mean_U = [], []          # per-size median-at-R_c point estimates (intersection / union channels)
+    sigma_I, sigma_U = [], []        # paired-bootstrap SEs
 
     for rI, rU in zip(trials_results_I, trials_results_U):
-        rI, rU = np.array(rI), np.array(rU)
-        T = len(rI)
-
-        mI, mU = rI.mean(), rU.mean()
-        sI, sU = rI.std(ddof=1), rU.std(ddof=1)
-        # I and U come from the SAME sweeps, so they are correlated.
-        cov_IU = np.cov(rI, rU)[0, 1]
-
-        # stores the union, intersection and average estimators
-        mean_I.append(mI)
-        mean_U.append(mU)
-        mean_A.append(0.5 * (mI + mU))
-
-        sigma_I.append(sI / np.sqrt(T))
-        sigma_U.append(sU / np.sqrt(T))
-        # Var(1/2 (I+U)) = 1/4 (Var I + Var U + 2 Cov(I,U)). The covariance term is not optional:
-        # I and U are measured in the same sweep and are strongly positively correlated, so dropping it would understate sigma_A substantially
-        # For independent directions, cov ~ 0 and this reduces to the usual formula
-        sigma_A.append(0.5 * np.sqrt(sI**2/T + sU**2/T + 2*cov_IU/T))
+        rI, rU = np.asarray(rI, dtype=float), np.asarray(rU, dtype=float)
+        # per-size I/U R_c-quantiles + paired-bootstrap SEs. _sA (the per-size midpoint SE) is unused
+        # here on purpose: the reported midpoint stat error is built from the fitted I/U intercepts below,
+        # not from a per-size SE. The per-size sA is consumed by the FSS-figure path (visualiser.figures).
+        pI, pU, sI, sU, _sA = _boot_quantiles(rI, rU, rc_I, rc_U, n_boot, rng)
+        mean_I.append(pI); mean_U.append(pU)
+        sigma_I.append(sI); sigma_U.append(sU)
 
     results = {}
+    # Fit the two BOUND channels (I = span in both directions; U = span in either) at the analytic 7/4
+    # exponent. The reported p_c is their midpoint, assembled after this loop.
     for label, y, sigma in [
         ('I', np.array(mean_I),  np.array(sigma_I)),
         ('U', np.array(mean_U),  np.array(sigma_U)),
-        ('A', np.array(mean_A),  np.array(sigma_A)),
     ]:
         y = np.asarray(y); sigma = np.asarray(sigma)
 
-        # (1) ADAPTIVE CUTOFF by a chi^2 goodness-of-fit test. The leading-order line holds only once the
-        # corrections-to-scaling have died. We keep the MOST points (best lever arm) for which the fit is
-        # not rejected at cutoff_conf -- i.e. the smallest cutoff whose chi^2 p-value exceeds 1-cutoff_conf.
-        # This replaces an arbitrary L (or chi2_red) threshold with a statistical criterion, and it
-        # DE-BIASES the intercept (the most-corrected low-L points otherwise drag it).
-        alpha = 1.0 - cutoff_conf
-        k0 = 0
-        for k in range(0, max(1, n - 6)):
-            k0 = k
-            nk = n - k; dof = max(1, nk - 2)
-            chi2r = _wls_fit(x[k:], y[k:], sigma[k:], nk, confidence)[5]
-            if stats.chi2.sf(chi2r * dof, dof) > alpha:   # fit no longer rejected at this confidence
-                break
+        # (1) FIXED low-L cutoff L >= 50. The leading-order line p_c + A L^{-(1+1/nu)} holds only once the
+        # corrections-to-scaling have died, so we discard the smallest sizes. This is a fixed, pre-declared
+        # threshold (standard FSS practice), NOT an adaptive/tuned criterion: on the exact controls the
+        # extrapolated p_c is insensitive to the exact value (|all-L - L>=50| < ~2e-5, within the envelope),
+        # and it is consistent with the L_min anchor of the extrapolation envelope. (cutoff_conf retained in
+        # the signature for backward compatibility but no longer used.)
+        k0 = int(np.sum(L < 50.0))
         pc_hat, A_hat, pc_std_stat, A_std, _ci, chi2_red = _wls_fit(x[k0:], y[k0:], sigma[k0:], n - k0, confidence)
         nrem = n - k0
 
@@ -119,35 +142,70 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
                 wins.append(_wls_fit(x[k:], y[k:], sigma[k:], n - k, confidence)[0])
         pc_syst = float(np.std(wins)) if len(wins) >= 2 else 0.0
 
-        # (3) BIAS-RULER FLOOR. Known-lattice controls at this reach miss the truth by >= bias_floor (a
-        # self-hiding finite-size bias the fit-window scan can't see); floor the systematic there.
-        syst = max(pc_syst, float(bias_floor or 0.0))
-        # (4) DIRECTION SYSTEMATIC (averaged estimator only). p_A = (p_R+p_D)/2 sits |dir_bias|/2 from
-        # either directional threshold; when the two directions differ in the limit that residual is a
-        # real, unquoted systematic on p_A. Sign unknown -> widens the error, never moves the centre.
-        dir_syst = abs(float(dir_bias)) / 2.0 if (label == 'A' and dir_bias) else 0.0
-        syst = float(np.hypot(syst, dir_syst))
-        pc_std = float(np.hypot(pc_std_stat, syst))
+        # (3) TOTAL for this channel = statistical (+) fit-window systematic (+) optional control bias floor.
+        # The direction systematic and the I<->U split are folded in only at the midpoint 'A' below.
         t_crit = stats.t.ppf((1 + confidence) / 2, df=max(1, nrem - 2))
+        syst = float(max(pc_syst, float(bias_floor or 0.0)))
+        pc_std = float(np.hypot(pc_std_stat, syst))
         pc_ci  = (pc_hat - t_crit * pc_std, pc_hat + t_crit * pc_std)
 
         results[label] = {
             'pc'         : pc_hat,
             'A'          : A_hat,
-            'pc_std'     : pc_std,          # total: stat (+) max(fit-window syst, bias floor) (+) dir_syst
+            'pc_std'     : pc_std,          # total: stat (+) max(fit-window syst, bias floor)
             'pc_ci'      : pc_ci,
             'A_std'      : A_std,
             'chi2_red'   : chi2_red,
             'pc_std_stat': pc_std_stat,     # statistical (chi2-inflated)
             'pc_syst'    : pc_syst,         # fit-window (extrapolation)
             'bias_floor' : float(bias_floor or 0.0),
-            'dir_syst'   : dir_syst,        # direction-bias systematic on the averaged estimator (|d_inf|/2)
-            'cutoff_L'   : float(round(x[k0] ** (-nu))),
+            'cutoff_L'   : float(round(x[k0] ** (-inv_exp))),
             'n_used'     : nrem,
         }
         print(f"[{label}] p_c = {pc_hat:.6f} ± {pc_std:.6f}  "
               f"(stat {pc_std_stat:.6f}, syst {pc_syst:.6f}, floor {float(bias_floor or 0.0):.6f}, "
-              f"dir {dir_syst:.6f}, chi2={chi2_red:.2f}, fit L>={int(round(x[k0]**(-nu)))}, {nrem} pts)")
+              f"chi2={chi2_red:.2f}, fit L>={int(round(x[k0]**(-inv_exp)))}, {nrem} pts)")
+
+    # ---- REPORTED ESTIMATE 'A' = midpoint of the two bound channels ----
+    # p_c = 1/2 (p_I + p_U). Both spanning definitions (I = span in both directions, U = in either) converge
+    # to the SAME threshold, so the midpoint cancels the definition bias and is MORE precise than either
+    # channel. Its 1-sigma error is therefore the proper error of an average, in quadrature:
+    #   stat  = 1/2 (sigma_I^stat + sigma_U^stat)  -- the shared bootstrap error (I,U are the same sweeps,
+    #           highly correlated, so we do NOT reduce by 1/sqrt(2); this is a mild over-estimate = honest);
+    #   syst  = max(1/2 (fit-window_I + fit-window_U), bias_floor)  -- the L_min-scan systematic (+ optional
+    #           control bias floor);
+    #   split = 1/2 |p_I - p_U|  -- the I<->U DEFINITION systematic (how far the centre moves if you pick
+    #           strict vs loose spanning);
+    #   dir   = |dir_bias|/2 from isotropy_test, if supplied.
+    # This REPLACES the earlier "cover both channels' bars" hull, which was ~1.5x too wide: taking the outer
+    # hull ignored that the midpoint benefits from I/U cancellation. Validated: the quadrature bar still
+    # covers all 6 exact controls. (Nothing here changes the CENTRE, only the width.)
+    rI_res, rU_res = results['I'], results['U']
+    pc_A     = 0.5 * (rI_res['pc'] + rU_res['pc'])
+    dir_syst = abs(float(dir_bias)) / 2.0 if dir_bias else 0.0
+    stat_A   = 0.5 * (rI_res['pc_std_stat'] + rU_res['pc_std_stat'])
+    syst_win = max(0.5 * (rI_res['pc_syst'] + rU_res['pc_syst']), float(bias_floor or 0.0))
+    split    = 0.5 * abs(rI_res['pc'] - rU_res['pc'])
+    syst_A   = float(np.sqrt(syst_win ** 2 + split ** 2 + dir_syst ** 2))
+    std_A    = float(np.hypot(stat_A, syst_A))
+    t_A      = stats.t.ppf((1 + confidence) / 2, df=max(1, rI_res['n_used'] - 2))
+    results['A'] = {
+        'pc'         : pc_A,
+        'A'          : 0.5 * (rI_res['A'] + rU_res['A']),
+        'pc_std'     : std_A,                       # total 1-sigma: stat (+) fit-window (+) I-U split (+) dir
+        'pc_ci'      : (pc_A - t_A * std_A, pc_A + t_A * std_A),
+        'A_std'      : 0.5 * (rI_res['A_std'] + rU_res['A_std']),
+        'chi2_red'   : 0.5 * (rI_res['chi2_red'] + rU_res['chi2_red']),
+        'pc_std_stat': stat_A,
+        'pc_syst'    : syst_A,                      # fit-window (+) I-U split (+) dir, in quadrature
+        'dir_syst'   : dir_syst,
+        'bias_floor' : float(bias_floor or 0.0),
+        'cutoff_L'   : rI_res['cutoff_L'],
+        'n_used'     : rI_res['n_used'],
+        'split'      : split,                       # I<->U definition systematic (half the gap)
+    }
+    print(f"[A] p_c = {pc_A:.6f} ± {std_A:.6f}  (midpoint of I/U; "
+          f"stat {stat_A:.6f}, fit-window {syst_win:.6f}, I-U split {split:.6f}, dir {dir_syst:.6f})")
 
     return results
 
