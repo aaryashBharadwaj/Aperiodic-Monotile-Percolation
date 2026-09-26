@@ -16,3 +16,5 @@ paper_results/figures/*
 
 # editor/agent local config
 .claude/
+
+_df_private/

@@ -9,7 +9,7 @@ its OWN checkpoint instead of starting over) and to write its status/checkpoint 
 This module formerly also launched runner.py as a detached process and polled it for the GUI's
 progress bar. That path was removed -- the GUI now just emits the exact `runner.py` command to run in
 a terminal -- so only the pieces the worker itself needs remain here (launch/liveness/list/stop were
-GUI-only and are gone). RESULTS_DIR comes from interface.gui_backend; the dependency is one-way
+GUI-only and are gone). RESULTS_DIR comes from engine.pipeline; the dependency is one-way
 (gui_backend never imports this module).
 """
 import os
@@ -17,7 +17,7 @@ import time
 import json
 import hashlib
 
-from interface.gui_backend import RESULTS_DIR
+from engine.pipeline import RESULTS_DIR
 
 
 # A run checkpoints after every L and writes a small JSON status file next to its checkpoint, so a

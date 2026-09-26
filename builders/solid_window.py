@@ -16,7 +16,7 @@ from matplotlib.path import Path
 
 def member_polys(member, patch):
     """Tile polygons of the member's patch (the same tiles its graph is built from)."""
-    import interface.gui_backend as gb
+    import engine.pipeline as gb
     if member in (gb.COMET_AP, gb.CHEVRON_AP):
         from generators.aperiodic_collapse import collapse_polys
         return collapse_polys("comet" if member == gb.COMET_AP else "chevron", patch)
@@ -56,7 +56,7 @@ def _coords_and_polys(member, patch):
     This is the whole speed story: the aperiodic endpoints fold a ~5M-vertex hat through pure-Python
     loops, so building the patch twice (graph + tiles separately) doubles the cost. collapse_graph hands
     back coords and polys together; hat/spectre share one patch object between the two builders."""
-    import interface.gui_backend as gb
+    import engine.pipeline as gb
     from builders.direct_graph_builder import build_neighbor_graph_fast
     from builders.dual_graph_builder import collect_leaf_polygons
     if member in (gb.COMET_AP, gb.CHEVRON_AP):

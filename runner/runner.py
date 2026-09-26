@@ -68,7 +68,7 @@ def main():
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # runner.py is in runner/
     sys.path.insert(0, repo_root)                                             # so the packages import
-    import interface.gui_backend as gb
+    import engine.pipeline as gb
     import runner.jobs as jobs
 
     # Derive the pieces the GUI passes explicitly but a console user shouldn't have to.

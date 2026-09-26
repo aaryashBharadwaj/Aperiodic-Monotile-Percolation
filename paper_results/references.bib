@@ -1,0 +1,346 @@
+% ============================================================================
+% references.bib  —  verified citation set for the aperiodic-monotile percolation paper
+% Compiled 2026-09-26 from two literature audits (tiling side + percolation-physics side).
+% Every entry's venue/DOI/arXiv was web-verified. Items needing a final eyeball are
+% marked "% CHECK:". Items only needed if a specific sentence survives are "% CONDITIONAL".
+%
+% NOT IN THIS FILE — the authors' OWN results (do NOT cite anyone for these):
+%   * hat graph == turtle graph bit-identity, and all four isomorphism-closed duals
+%     (comet-per==triangular, chevron-per==square, Tile(1,1)-per==triangular,
+%      comet-ap dual == hat dual). SMKGS support only the TILING-level family equivalence.
+%   * the "Bharadwaj 3/4 conjecture" (comet-periodic site ~ 3/4).
+%   * every measured p_c, the Cardy positive/negative controls, the dual thresholds.
+% ============================================================================
+
+% ---------- Aperiodic monotiles: discovery + Tile(a,b) family ----------
+% Cite for: existence of the hat; the labels Hat=Tile(1,sqrt3), turtle=Tile(sqrt3,1),
+% chevron=Tile(0,1), comet=Tile(1,0), and the TILING-level equivalence of the continuum.
+@article{smith2024hat,
+  author  = {Smith, David and Myers, Joseph Samuel and Kaplan, Craig S. and Goodman-Strauss, Chaim},
+  title   = {An aperiodic monotile},
+  journal = {Combinatorial Theory},
+  volume  = {4},
+  number  = {1},
+  pages   = {Paper No. 6},
+  year    = {2024},
+  doi     = {10.5070/C64163843},
+  eprint  = {2303.10798},
+  archivePrefix = {arXiv},
+  primaryClass  = {math.CO}
+}
+
+% Cite for: the Spectre as a strictly chiral aperiodic monotile; weakly-chiral Tile(1,1).
+@article{smith2024spectre,
+  author  = {Smith, David and Myers, Joseph Samuel and Kaplan, Craig S. and Goodman-Strauss, Chaim},
+  title   = {A chiral aperiodic monotile},
+  journal = {Combinatorial Theory},
+  volume  = {4},
+  number  = {2},
+  year    = {2024},
+  doi     = {10.5070/C64264241},
+  eprint  = {2305.17743},
+  archivePrefix = {arXiv},
+  primaryClass  = {math.CO}
+}
+
+% ---------- Harris–Luck relevance criterion (the "aperiodicity is irrelevant" argument) ----------
+@article{harris1974,
+  author  = {Harris, A. B.},
+  title   = {Effect of random defects on the critical behaviour of {Ising} models},
+  journal = {Journal of Physics C: Solid State Physics},
+  volume  = {7},
+  number  = {9},
+  pages   = {1671--1692},
+  year    = {1974},
+  doi     = {10.1088/0022-3719/7/9/009}
+}
+
+@article{luck1993,
+  author  = {Luck, J. M.},
+  title   = {A classification of critical phenomena on quasi-crystals and other aperiodic structures},
+  journal = {Europhysics Letters},
+  volume  = {24},
+  number  = {5},
+  pages   = {359--364},
+  year    = {1993},
+  doi     = {10.1209/0295-5075/24/5/007}
+}
+% CONDITIONAL companion (full derivation; cite with luck1993 only if you want the detailed treatment):
+@article{luck1993jsp,
+  author  = {Luck, J. M.},
+  title   = {Critical behavior of the aperiodic quantum {Ising} chain in a transverse magnetic field},
+  journal = {Journal of Statistical Physics},
+  volume  = {72},
+  number  = {3--4},
+  pages   = {417--458},
+  year    = {1993},
+  doi     = {10.1007/BF01048019}
+}
+
+% ---------- Percolation on quasicrystals / Penrose (validation control + prior art) ----------
+% Penrose SITE p_c = 0.58391(1) [VERIFIED value; write it as 0.58391(1), NOT "0.583910" -- the source
+% gives a +/-1e-5 error bar, so a trailing 0 / 6-decimal uncertainty would be over-stated precision].
+% This is the correct source for the SITE value ONLY (Ziff-Babalievski report no bond threshold).
+@article{ziff1999penrose,
+  author  = {Ziff, R. M. and Babalievski, F.},
+  title   = {Site percolation on the {Penrose} rhomb lattice},
+  journal = {Physica A},
+  volume  = {269},
+  number  = {2--4},
+  pages   = {201--210},
+  year    = {1999},
+  doi     = {10.1016/S0378-4371(99)00166-1}
+}
+% Penrose BOND p_c ~ 0.477 -- NOT Ziff-Babalievski. Primary = the dedicated Yonezawa-group Penrose study
+% (this is also what the manuscript already cites). The PRB "Part I" paper (40, 636) is only the METHOD
+% paper; the Penrose result actually lives in "Part II" (40, 650), kept below as the refereed alternative.
+@article{yonezawa1988penrose,
+  author  = {Yonezawa, Fumiko and Sakamoto, Shoichi and Aoki, Kazumasa and Nos\'e, Shuichi and Hori, Motoo},
+  title   = {Percolation in {Penrose} tiling and its dual -- in comparison with analysis for kagom\'e, dice and square lattices},
+  journal = {Journal of Non-Crystalline Solids},
+  volume  = {106},
+  number  = {1--3},
+  pages   = {262--269},
+  year    = {1988},
+  doi     = {10.1016/0022-3093(88)90268-3}
+}
+% CHECK: JNCS volume/page/DOI for yonezawa1988penrose were not read from the primary (paywalled) --
+% verify against the actual paper before submission. Refereed alternative that contains the Penrose result:
+@article{yonezawa1989partII,
+  author  = {Yonezawa, Fumiko and Sakamoto, Shoichi and Hori, Motoo},
+  title   = {Percolation in two-dimensional lattices. {II}. {The} extent of universality},
+  journal = {Physical Review B},
+  volume  = {40},
+  number  = {1},
+  pages   = {650--660},
+  year    = {1989},
+  doi     = {10.1103/PhysRevB.40.650}
+}
+
+% ---------- Simulation kernel: Newman–Ziff union-find ----------
+@article{newman2000,
+  author  = {Newman, M. E. J. and Ziff, R. M.},
+  title   = {Efficient {Monte} {Carlo} algorithm and high-precision results for percolation},
+  journal = {Physical Review Letters},
+  volume  = {85},
+  number  = {19},
+  pages   = {4104--4107},
+  year    = {2000},
+  doi     = {10.1103/PhysRevLett.85.4104},
+  eprint  = {cond-mat/0005264},
+  archivePrefix = {arXiv}
+}
+@article{newman2001,
+  author  = {Newman, M. E. J. and Ziff, R. M.},
+  title   = {Fast {Monte} {Carlo} algorithm for site or bond percolation},
+  journal = {Physical Review E},
+  volume  = {64},
+  number  = {1},
+  pages   = {016706},
+  year    = {2001},
+  doi     = {10.1103/PhysRevE.64.016706},
+  eprint  = {cond-mat/0101295},
+  archivePrefix = {arXiv}
+}
+
+% ---------- The 7/4 = 1+1/nu extrapolation exponent (KEY; tie to the MEDIAN estimator) ----------
+% Wording: crossing-based (median / cell-to-cell) threshold estimates converge as
+% L^{-(1+1/nu)} = L^{-7/4}. Do NOT attribute 7/4 to their average-probability estimator (exp 0.90).
+@article{ziff2002convergence,
+  author  = {Ziff, R. M. and Newman, M. E. J.},
+  title   = {Convergence of threshold estimates for two-dimensional percolation},
+  journal = {Physical Review E},
+  volume  = {66},
+  number  = {1},
+  pages   = {016129},
+  year    = {2002},
+  doi     = {10.1103/PhysRevE.66.016129},
+  eprint  = {cond-mat/0203496},
+  archivePrefix = {arXiv}
+}
+
+% ---------- Cardy crossing formula + conformal invariance / universality ----------
+@article{cardy1992,
+  author  = {Cardy, John L.},
+  title   = {Critical percolation in finite geometries},
+  journal = {Journal of Physics A: Mathematical and General},
+  volume  = {25},
+  number  = {4},
+  pages   = {L201--L206},
+  year    = {1992},
+  doi     = {10.1088/0305-4470/25/4/009}
+}
+@article{smirnov2001,
+  author  = {Smirnov, Stanislav},
+  title   = {Critical percolation in the plane: conformal invariance, {Cardy}'s formula, scaling limits},
+  journal = {Comptes Rendus de l'Acad\'emie des Sciences - Series I - Mathematics},
+  volume  = {333},
+  number  = {3},
+  pages   = {239--244},
+  year    = {2001},
+  doi     = {10.1016/S0764-4442(01)01991-7}
+}
+% Cite for: crossing probability is a UNIVERSAL (lattice-independent) function — the monotile claim.
+@article{langlands1994,
+  author  = {Langlands, Robert and Pouliot, Philippe and Saint-Aubin, Yvan},
+  title   = {Conformal invariance in two-dimensional percolation},
+  journal = {Bulletin of the American Mathematical Society},
+  volume  = {30},
+  number  = {1},
+  pages   = {1--61},
+  year    = {1994},
+  doi     = {10.1090/S0273-0979-1994-00456-2},
+  eprint  = {math/9401222},
+  archivePrefix = {arXiv}
+}
+% CONDITIONAL: only if you use the horizontal-AND-vertical crossing probability (not plain L-R).
+@article{watts1996,
+  author  = {Watts, G. M. T.},
+  title   = {A crossing probability for critical percolation in two dimensions},
+  journal = {Journal of Physics A: Mathematical and General},
+  volume  = {29},
+  number  = {14},
+  pages   = {L363--L368},
+  year    = {1996},
+  doi     = {10.1088/0305-4470/29/14/002},
+  eprint  = {cond-mat/9603167},
+  archivePrefix = {arXiv}
+}
+
+% ---------- Corrections-to-scaling & fit-window (FSS methodology) ----------
+% Supports: varying L_min is standard MC-FSS practice.
+@article{deoliveira2003,
+  author  = {de Oliveira, P. M. C. and N\'obrega, R. A. and Stauffer, D.},
+  title   = {Corrections to finite size scaling in percolation},
+  journal = {Brazilian Journal of Physics},
+  volume  = {33},
+  number  = {3},
+  pages   = {616--618},
+  year    = {2003},
+  doi     = {10.1590/S0103-97332003000300025},
+  eprint  = {cond-mat/0308525},
+  archivePrefix = {arXiv}
+}
+
+% ---------- High-precision thresholds (validation controls) ----------
+% jacobsen2014 is the record source for BOTH: square site 0.59274605079210(2) AND honeycomb site
+% 0.697040230(5) (VERIFIED, Table 51). The brief's digits match Jacobsen, NOT Newman-Ziff's older
+% square value (...621) NOR Feng-Deng-Blote's honeycomb (0.6970402(1), fewer digits -- see feng2008).
+% Cite newman2000 for the ALGORITHM; cite jacobsen2014 whenever the sharp square/honeycomb digits appear.
+@article{jacobsen2014,
+  author  = {Jacobsen, Jesper Lykke},
+  title   = {High-precision percolation thresholds and {Potts}-model critical manifolds from graph polynomials},
+  journal = {Journal of Physics A: Mathematical and Theoretical},
+  volume  = {47},
+  number  = {13},
+  pages   = {135001},
+  year    = {2014},
+  doi     = {10.1088/1751-8113/47/13/135001},
+  eprint  = {1401.7847},
+  archivePrefix = {arXiv}
+}
+% feng2008 honeycomb site = 0.6970402(1) (transfer matrix; VERIFIED). Use this ONLY if citing FDB; for
+% the sharp 0.697040230(5) cite jacobsen2014 instead. feng2008's main role here is the FSS/corrections ref.
+@article{feng2008,
+  author  = {Feng, Xiaomei and Deng, Youjin and Bl\"ote, Henk W. J.},
+  title   = {Percolation transitions in two dimensions},
+  journal = {Physical Review E},
+  volume  = {78},
+  number  = {3},
+  pages   = {031136},
+  year    = {2008},
+  doi     = {10.1103/PhysRevE.78.031136},
+  eprint  = {0901.1370},
+  archivePrefix = {arXiv}
+}
+
+% ---------- Exact thresholds ----------
+@article{kesten1980,
+  author  = {Kesten, Harry},
+  title   = {The critical probability of bond percolation on the square lattice equals 1/2},
+  journal = {Communications in Mathematical Physics},
+  volume  = {74},
+  number  = {1},
+  pages   = {41--59},
+  year    = {1980},
+  doi     = {10.1007/BF01197577}
+}
+% Exact triangular site=1/2, triangular bond=2sin(pi/18), square bond=1/2, honeycomb bond=1-2sin(pi/18).
+@article{sykes1964,
+  author  = {Sykes, M. F. and Essam, J. W.},
+  title   = {Exact critical percolation probabilities for site and bond problems in two dimensions},
+  journal = {Journal of Mathematical Physics},
+  volume  = {5},
+  number  = {8},
+  pages   = {1117--1127},
+  year    = {1964},
+  doi     = {10.1063/1.1704215}
+}
+
+% ---------- Exact 2D exponents nu=4/3, d_f=91/48 ----------
+@article{dennijs1979,
+  author  = {den Nijs, M. P. M.},
+  title   = {A relation between the temperature exponents of the eight-vertex and $q$-state {Potts} model},
+  journal = {Journal of Physics A: Mathematical and General},
+  volume  = {12},
+  number  = {10},
+  pages   = {1857--1868},
+  year    = {1979},
+  doi     = {10.1088/0305-4470/12/10/030}
+}
+@article{nienhuis1982,
+  author  = {Nienhuis, Bernard},
+  title   = {Exact critical point and critical exponents of {O}($n$) models in two dimensions},
+  journal = {Physical Review Letters},
+  volume  = {49},
+  number  = {15},
+  pages   = {1062--1065},
+  year    = {1982},
+  doi     = {10.1103/PhysRevLett.49.1062}
+}
+@book{stauffer1994,
+  author    = {Stauffer, Dietrich and Aharony, Amnon},
+  title     = {Introduction to Percolation Theory},
+  edition   = {2nd},
+  publisher = {Taylor \& Francis},
+  address   = {London},
+  year      = {1994}
+}
+
+% ---------- CONDITIONAL: correction-to-scaling exponent Omega = 72/91 (only if a corrections sentence stays) ----------
+@article{ziff2011omega,
+  author  = {Ziff, Robert M.},
+  title   = {Correction-to-scaling exponent for two-dimensional percolation},
+  journal = {Physical Review E},
+  volume  = {83},
+  number  = {2},
+  pages   = {020107},
+  year    = {2011},
+  doi     = {10.1103/PhysRevE.83.020107},
+  eprint  = {1101.0807},
+  archivePrefix = {arXiv}
+}
+@article{xu2025omega,
+  author  = {Xu, Yu and Chen, Tao and Zhou, Zongzheng and Salas, Jes\'us and Deng, Youjin},
+  title   = {Correction-to-scaling exponent for percolation and the {Fortuin}-{Kasteleyn} {Potts} model in two dimensions},
+  journal = {Physical Review E},
+  volume  = {111},
+  number  = {3},
+  pages   = {034108},
+  year    = {2025},
+  doi     = {10.1103/PhysRevE.111.034108},
+  eprint  = {2411.12646},
+  archivePrefix = {arXiv}
+}
+
+% ---------- CONDITIONAL: only if the words "Birge ratio" appear in the manuscript ----------
+@article{birge1932,
+  author  = {Birge, Raymond T.},
+  title   = {The calculation of errors by the method of least squares},
+  journal = {Physical Review},
+  volume  = {40},
+  number  = {2},
+  pages   = {207--227},
+  year    = {1932},
+  doi     = {10.1103/PhysRev.40.207}
+}

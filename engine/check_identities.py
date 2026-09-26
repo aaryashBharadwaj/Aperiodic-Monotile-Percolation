@@ -14,7 +14,7 @@ The hat / spectre / chevron-aperiodic duals have NO such identity -- they are th
 aperiodic objects, so this checker makes no claim about them.
 """
 import argparse
-import interface.gui_backend as gb
+import engine.pipeline as gb
 from engine import isomorphism as iso
 
 

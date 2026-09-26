@@ -44,7 +44,7 @@ def main():
 
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, repo)
-    import interface.gui_backend as gb
+    import engine.pipeline as gb
     from engine.cardy import cardy_pi_h, crossing_probability
 
     graph = _GRAPH.get(args.graph.strip().lower(), args.graph)
