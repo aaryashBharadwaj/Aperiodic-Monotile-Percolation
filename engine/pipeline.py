@@ -35,7 +35,6 @@ from generators.chevron_and_comet import periodic_graph, periodic_polys
 from generators.periodic_tiling_generator import square_tiles, triangular_tris   # validated periodic geometry
 
 S3 = math.sqrt(3)
-NU = 4.0 / 3.0                                                    # imported by visualiser.figures (fss_figure)
 # All results live under paper_results/npz (the .npz + job checkpoints). Contents are regenerated/
 # contingent and gitignored; only the folder is tracked (.gitkeep).
 RESULTS_DIR = os.path.join(REPO_ROOT, "paper_results", "npz")     # all result .npz + checkpoints (cwd-independent)

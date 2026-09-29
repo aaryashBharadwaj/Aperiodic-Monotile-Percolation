@@ -109,7 +109,7 @@ def extrapolate_pc_raw(L_list, trials_results_I, trials_results_U, nu=4/3, confi
         rI, rU = np.asarray(rI, dtype=float), np.asarray(rU, dtype=float)
         # per-size I/U R_c-quantiles + paired-bootstrap SEs. _sA (the per-size midpoint SE) is unused
         # here on purpose: the reported midpoint stat error is built from the fitted I/U intercepts below,
-        # not from a per-size SE. The per-size sA is consumed by the FSS-figure path (visualiser.figures).
+        # not from a per-size SE. _boot_quantiles still returns the per-size sA, but nothing consumes it here.
         pI, pU, sI, sU, _sA = _boot_quantiles(rI, rU, rc_I, rc_U, n_boot, rng)
         mean_I.append(pI); mean_U.append(pU)
         sigma_I.append(sI); sigma_U.append(sU)
@@ -249,33 +249,3 @@ def isotropy_test(L_list, pR, pD, nu=4.0/3.0, confidence=0.95, L_min=50):
 # removed 2026-09-08: d_f from <S_max> is boundary-suppressed on open patches (a clean determination
 # needs a boundary-free geometry, which aperiodic tilings can't provide), so it isn't a paper claim.
 # The archived s_max arrays are left, with that caveat, for independent future analysis.
-
-
-# ---- correlation-length exponent nu from the transition width (omega is an INPUT, not a fit) ----
-def _width_gof(L, widths, sigmas, omega, bounds=(1.10, 1.60)):
-    """Best-fit nu at fixed omega, PLUS the joint chi^2 and its dof -- the goodness-of-fit the adaptive
-    cutoff tests. Model per channel: std(onset) = A L^{-1/nu} (1 + B L^{-omega}); the amplitudes (A, A*B)
-    are profiled out linearly, nu is shared across channels, omega is held fixed. Several channels
-    (site/bond, I/U) share nu but keep independent amplitudes, which is what tightens nu. Free parameters =
-    2 per channel (the amplitudes) + 1 (nu), so dof = (points x channels) - (2*channels + 1). `bounds`
-    clamps the nu search -- the 2D default brackets 4/3; the 3D null control (null_control_cube.width_nu)
-    passes a wider range so a ~0.88 value is reachable."""
-    from scipy.optimize import minimize_scalar
-    def chi2(nu):
-        tot = 0.0
-        for w, sig in zip(widths, sigmas):
-            M = np.column_stack([L ** (-1.0 / nu), L ** (-1.0 / nu - omega)]); Wt = 1.0 / sig ** 2
-            try:
-                c = np.linalg.solve((M * Wt[:, None]).T @ M, (M * Wt[:, None]).T @ w)
-            except np.linalg.LinAlgError:
-                return 1e18
-            tot += float(np.sum(Wt * (w - M @ c) ** 2))
-        return tot
-    nu = float(minimize_scalar(chi2, bounds=bounds, method="bounded").x)
-    n_ch = len(widths); m = len(L)
-    return nu, chi2(nu), max(1, m * n_ch - (2 * n_ch + 1))
-
-
-def _width_nu(L, widths, sigmas, omega):
-    """The nu minimising the joint weighted residual of the width model (see _width_gof for the model)."""
-    return _width_gof(L, widths, sigmas, omega)[0]

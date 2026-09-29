@@ -1,13 +1,14 @@
 """NEGATIVE CONTROL: the 3D simple-cubic (and 4D simple-hypercubic) lattice through the SAME pipeline.
 
 Every other object in the paper is a positive control -- it lands in the 2D percolation universality
-class (nu = 4/3). That makes agreement cheap: a method that always answered "2D" would pass every one
-of those tests. The cube/hypercube is the falsification test. It is a genuine percolation lattice, but
-a 3D/4D one, so its correlation-length exponent is textbook-different (nu ~ 0.876 in 3D, ~0.685 in 4D;
-simple-cubic site p_c ~ 0.3116). Feeding it to the identical estimator and the identical width-line nu
-procedure MUST return those numbers, not 4/3 -- which is what shows the pipeline tells the classes apart.
+class. That makes agreement cheap: a method that always answered "2D" would pass every one of those
+tests. The cube/hypercube is the falsification test. It is a genuine percolation lattice, but a 3D/4D
+one, so its site threshold is textbook-different (simple-cubic ~0.3116, simple-hypercubic ~0.1969).
+The control has two parts. (1) p_c recovery: feeding the box to the identical estimator MUST return
+those known thresholds, showing the estimator is not 2D-overfit. (2) The Cardy negative control
+(--cardy): its crossing probability MUST deviate from the exact 2D Cardy curve, showing the Cardy
+universality test correctly REJECTS non-2D geometry -- the falsification the positive tests need.
 
-The control is nu-ONLY: nu alone discriminates 2D/3D/4D cleanly (see visualiser/universality_map.py).
 The largest-cluster size is still RECORDED (an archived raw observable) but d_f is NOT analysed here --
 d_f from <S_max> is boundary-suppressed on open patches (a clean value needs a boundary-free geometry,
 unavailable for aperiodic tilings), so the fractal dimension is left out of the control (removed 2026-09-08).
@@ -25,7 +26,7 @@ import numpy as np
 from builders.graph_core import edges_to_adjacency
 from engine.percolation import (percolationStatsI_par, percolationStatsU_par,
                                 percolationStatsExponents_par)
-from engine.analysis import extrapolate_pc_raw, _width_gof
+from engine.analysis import extrapolate_pc_raw
 
 NU_3D = 0.8762                   # 3D percolation correlation-length exponent (literature)
 NU_4D = 0.6852                   # 4D percolation correlation-length exponent (literature)
@@ -121,32 +122,20 @@ def cube_cardy(L, aspects, T=8000, seed=12345, d=3):
     return aspects, Rh, cardy2d, pstar
 
 
-def width_nu(L_list, channels, nu_lo=0.6, nu_hi=1.6, omega=1.0):
-    """Same width-line estimator as engine.analysis._width_gof (std(onset) ~ L^{-1/nu}, amplitudes
-    profiled out, correction term at fixed omega) but with a WIDE nu bound so a 3D value (~0.88) is
-    reachable -- the 2D fitter clamps to [1.10, 1.60]. channels = list of per-L onset-array lists sharing nu."""
-    L = np.asarray(L_list, float)
-    widths = [np.array([np.std(a, ddof=1) for a in ch]) for ch in channels]
-    sigmas = [w / np.sqrt(2.0 * (len(ch[0]) - 1)) for w, ch in zip(widths, channels)]
-    # Same profiled-amplitude chi^2 fit as the 2D analysis, just a wider nu bracket -- delegate to it
-    # instead of keeping a second copy of the kernel.
-    return _width_gof(L, widths, sigmas, omega, bounds=(nu_lo, nu_hi))[0]
-
-
 # a size ladder: dense at small L (cheap, anchors the curve), sparse at large L (each is L^d, expensive).
 _LADDER = [8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 128, 160, 192, 224, 256, 288, 320, 384]
 
 
 def main():
     import argparse
-    ap = argparse.ArgumentParser(description="d-dimensional hypercubic negative control (nu-only)")
+    ap = argparse.ArgumentParser(description="d-dimensional hypercubic negative control (p_c recovery + Cardy)")
     ap.add_argument("--dim", type=int, default=3, help="lattice dimension: 3 = cube, 4 = hypercube")
     ap.add_argument("--lmax", type=int, default=48, help="largest side L (3D best ~320; 4D ~32)")
     ap.add_argument("--trials", type=int, default=1000, help="trials per size (hat used 1000)")
     ap.add_argument("--seed", type=int, default=123456789)
-    ap.add_argument("--out", default=None, help="optional npz to save (keys L/I/U/smax/pc/nu/dim)")
+    ap.add_argument("--out", default=None, help="optional npz to save (keys L/I/U/smax/pc/dim)")
     ap.add_argument("--cardy", action="store_true",
-                    help="run the Cardy NEGATIVE control (footprint aspect sweep vs 2D Cardy) not the nu sweep")
+                    help="run the Cardy NEGATIVE control (footprint aspect sweep vs 2D Cardy) not the p_c-recovery sweep")
     ap.add_argument("--n-aspects", type=int, default=20, help="aspect points for --cardy")
     args = ap.parse_args()
     d = args.dim
@@ -175,23 +164,20 @@ def main():
           f"L<={args.lmax}, T={args.trials}\n")
     r = run_cube_sweep(L_list, T=args.trials, seed=args.seed, d=d)
 
-    # p_c: extrapolate with the dimension's own nu (shows the measurement RECOVERS the known value)
+    # p_c: extrapolate with the dimension's own nu as the correction exponent (shows the measurement
+    # RECOVERS the known 3D/4D threshold -- the recovery, not nu itself, is the reported control result).
     pc = extrapolate_pc_raw(r["L"], r["I"], r["U"], nu=(lit_nu or 0.9))["A"]
-    # nu: the paper's width-line procedure, wide bound so a <2D-class value is reachable
-    nu = width_nu(r["L"], [r["I"], r["U"]])
-    nu_2Dfit = width_nu(r["L"], [r["I"], r["U"]], nu_lo=1.10, nu_hi=1.60)   # what a 2D-clamped fitter sees
 
     print("\n" + "=" * 78)
-    print(f"RESULT  ({d}D measured  vs  {d}D literature  vs  the 2D class the family sits in)")
+    print(f"RESULT  ({d}D p_c recovery  vs  {d}D literature)")
     print("=" * 78)
     print(f"  p_c  : {pc['pc']:.4f} ± {pc['pc_std']:.4f}   | {d}D lit {lit_pc}   | 2D family 0.50-0.85")
-    print(f"  nu   : {nu:.3f}                    | {d}D lit {lit_nu}   | 2D class 1.333 (4/3)")
-    print(f"\n  2D-clamped width-nu fit rails to {nu_2Dfit:.3f} (its 1.10 floor): the {d}D lattice is")
-    print("  INCOMPATIBLE with nu=4/3 -- the negative control the positive tests need.")
+    print(f"\n  The estimator recovers the known {d}D threshold, so it is not 2D-overfit. Run --cardy for")
+    print("  the Cardy negative control (the crossing test that must REJECT this non-2D geometry).")
     if args.out:
-        # smax is saved as an archived raw observable (not analysed for d_f); nu is the control result.
+        # smax is saved as an archived raw observable (not analysed for d_f).
         np.savez(args.out, L=np.array(r["L"], float), I=np.array(r["I"], float), U=np.array(r["U"], float),
-                 smax=np.array(r["smax"], float), pc=pc["pc"], pc_std=pc["pc_std"], nu=nu,
+                 smax=np.array(r["smax"], float), pc=pc["pc"], pc_std=pc["pc_std"],
                  dim=d, T=args.trials, seed=args.seed, lmax=args.lmax)
         print("\nsaved ->", args.out)
 
